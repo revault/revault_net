@@ -8,6 +8,8 @@ pub mod message;
 
 pub mod noise;
 
+pub mod entities;
+
 mod error;
 pub use error::Error;
 

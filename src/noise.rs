@@ -4,33 +4,50 @@
 //! noise handshakes. The Cosigner and Watchtower software should always act as a
 //! responder and only for User initiators.
 
+use crate::entities::{Cosigner, Entity, EntityMap, Manager, Stakeholder, Watchtower};
 use crate::error::Error;
 use snow::{params::NoiseParams, resolvers::SodiumResolver, Builder, HandshakeState, Keypair};
+use std::net::TcpStream;
 
-/// Type for specifying the remote entity a User is connecting to
 #[derive(Debug)]
 pub enum RemoteEntity {
-    /// Watchtower
-    Watchtower,
-    /// Cosigner
-    Cosigner,
-    /// User
-    User,
+    Cosigner(Cosigner),
+    Manager(Manager),
+    Stakeholder(Stakeholder),
+    Watchtower(Watchtower),
 }
 
-/// In Revault a User connects to any of the RemoteEntity variants with a different
-/// noise handshake pattern. This function specifies the exact Noise parameters to use.  
-pub fn get_noise_params_as_user(remote_entity: &RemoteEntity) -> Result<NoiseParams, Error> {
+/// In Revault a Stakeholder connects only to Stakeholders and Watchtowers, which both implementing
+/// the Entity trait, with a distinct noise handshake pattern. This function returns the exact
+/// Noise parameters to use.  
+pub fn get_noise_params_as_stakeholder(remote_entity: &RemoteEntity) -> Result<NoiseParams, Error> {
     match remote_entity {
-        RemoteEntity::Watchtower => Ok("Noise_XK_25519_ChaChaPoly_SHA256"
+        Watchtower => Ok("Noise_XK_25519_ChaChaPoly_SHA256"
             .parse()
             .map_err(|e| Error::Noise(format!("Invalid Noise Pattern: {}", e)))?),
-        RemoteEntity::Cosigner => Ok("Noise_XK_25519_ChaChaPoly_SHA256"
+        Stakeholder => Ok("Noise_KK_25519_ChaChaPoly_SHA256"
             .parse()
             .map_err(|e| Error::Noise(format!("Invalid Noise Pattern: {}", e)))?),
-        RemoteEntity::User => Ok("Noise_KK_25519_ChaChaPoly_SHA256"
+        _ => Err(Error::Noise(format!(
+            "Stakeholders only connect with Watchtowers and other Stakeholders"
+        ))),
+    }
+}
+
+/// In Revault a Manager connects only to Stakeholders and Watchtowers, which both implementing
+/// the Entity trait, with a distinct noise handshake pattern. This function returns the exact
+/// Noise parameters to use.  
+pub fn get_noise_params_as_manager(remote_entity: &RemoteEntity) -> Result<NoiseParams, Error> {
+    match remote_entity {
+        Watchtower => Ok("Noise_XK_25519_ChaChaPoly_SHA256"
             .parse()
             .map_err(|e| Error::Noise(format!("Invalid Noise Pattern: {}", e)))?),
+        Cosigner => Ok("Noise_XK_25519_ChaChaPoly_SHA256"
+            .parse()
+            .map_err(|e| Error::Noise(format!("Invalid Noise Pattern: {}", e)))?),
+        _ => Err(Error::Noise(format!(
+            "Managers only connect with Watchtowers and Cosigners"
+        ))),
     }
 }
 
@@ -84,40 +101,68 @@ pub fn get_handshake_state(
     }
 }
 
+// Given an incoming TCP stream, the calling software needs to determine which entity it
+// is communicating with and decipher the message that is read.
+pub fn decipher_stream(stream: TcpStream, map: EntityMap, buf: &mut [u8]) -> Result<(), Error> {
+    // for each entity in entity_map:
+    //      get pubkey
+    //      get NoiseParams
+    //      try to decipher msg:
+    //          if ok { write deciphered msg to buf & return }
+    //          else { continue }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         generate_keypair, get_handshake_state, get_noise_params_as_cosigner,
-        get_noise_params_as_user, get_noise_params_as_watchtower, RemoteEntity,
+        get_noise_params_as_manager, get_noise_params_as_stakeholder,
+        get_noise_params_as_watchtower, RemoteEntity,
     };
+    use crate::entities::{Cosigner, Stakeholder, Watchtower};
 
     #[test]
     fn test_get_noise_params() {
-        let wt = RemoteEntity::Watchtower {};
-        let cs = RemoteEntity::Cosigner {};
-        let us = RemoteEntity::User {};
+        let dummy_pubkey: Vec<u8> = Vec::new();
+        let wt = RemoteEntity::Watchtower(Watchtower {
+            public_key: dummy_pubkey.clone(),
+        });
+        let cs = RemoteEntity::Cosigner(Cosigner {
+            public_key: dummy_pubkey.clone(),
+        });
+        let stk = RemoteEntity::Stakeholder(Stakeholder {
+            public_key: dummy_pubkey,
+        });
 
         // Check noise parameter selection doesn't error for the hard-coded
         // handshake patterns.
-        assert!(get_noise_params_as_user(&wt).is_ok());
-        assert!(get_noise_params_as_user(&cs).is_ok());
-        assert!(get_noise_params_as_user(&us).is_ok());
+        assert!(get_noise_params_as_stakeholder(&wt).is_ok());
+        assert!(get_noise_params_as_stakeholder(&stk).is_ok());
+        assert!(get_noise_params_as_manager(&cs).is_ok());
+        assert!(get_noise_params_as_manager(&wt).is_ok());
         assert!(get_noise_params_as_cosigner().is_ok());
         assert!(get_noise_params_as_watchtower().is_ok());
     }
 
     #[test]
     fn test_generate_keypair() {
-        let us = RemoteEntity::User {};
-        let noise_params = get_noise_params_as_user(&us).unwrap();
+        let dummy_pubkey: Vec<u8> = Vec::new();
+        let stk = RemoteEntity::Stakeholder(Stakeholder {
+            public_key: dummy_pubkey,
+        });
+        let noise_params = get_noise_params_as_stakeholder(&stk).unwrap();
         assert!(generate_keypair(noise_params).is_ok());
     }
 
     #[test]
     fn test_get_handshake_state() {
         // User as initiator
-        let us = RemoteEntity::User {};
-        let noise_params = get_noise_params_as_user(&us).unwrap();
+        let dummy_pubkey: Vec<u8> = Vec::new();
+        let stk = RemoteEntity::Stakeholder(Stakeholder {
+            public_key: dummy_pubkey,
+        });
+        let noise_params = get_noise_params_as_stakeholder(&stk).unwrap();
         let initiator = true;
         let local_keypair = generate_keypair(noise_params.clone()).unwrap();
         let remote_keypair = generate_keypair(noise_params.clone()).unwrap();
