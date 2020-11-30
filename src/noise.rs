@@ -73,6 +73,7 @@ impl KXHandshakeActOne {
 
     /// Start the first act of the handshake as a responder (reading e and doing wizardry with it)
     pub fn responder(
+        my_privkey: &NoisePrivKey,
         their_pubkey: &NoisePubKey,
         message: &KXMessageActOne,
     ) -> Result<KXHandshakeActOne, Error> {
@@ -85,6 +86,7 @@ impl KXHandshakeActOne {
             Box::new(SodiumResolver::default()),
         );
         let mut state = builder
+            .local_private_key(&my_privkey.0)
             .remote_public_key(&their_pubkey.0)
             .build_responder()
             .map_err(|e| Error::Noise(format!("Failed to build state for responder: {:?}", e)))?;
@@ -389,4 +391,161 @@ pub fn decrypt_message(
     output.truncate(message_len);
 
     Ok(output)
+}
+
+#[cfg(test)]
+pub mod tests {
+    use crate::{
+        error::Error,
+        noise::{
+            decrypt_message, encrypt_message, KKChannel, KKHandshakeActOne, KKHandshakeActTwo,
+            KKMessageActOne, KKMessageActTwo, KXChannel, KXHandshakeActOne, KXHandshakeActTwo,
+            KXMessageActOne, NoisePrivKey, NoisePubKey, NOISE_MESSAGE_HEADER_SIZE,
+            NOISE_MESSAGE_MAX_SIZE, NOISE_PADDED_MESSAGE_SIZE,
+        },
+    };
+    use snow::{params::NoiseParams, resolvers::SodiumResolver, Builder, Keypair};
+    use std::convert::TryInto;
+
+    #[derive(Debug, Clone)]
+    enum HandshakeChoice {
+        Kx,
+        Kk,
+    }
+
+    fn get_noise_params(hs_choice: &HandshakeChoice) -> Result<NoiseParams, Error> {
+        let noise_params: NoiseParams = match hs_choice {
+            HandshakeChoice::Kk => "Noise_KK_25519_ChaChaPoly_SHA256"
+                .parse()
+                .map_err(|e| Error::Noise(format!("Invalid Noise Pattern: {}", e)))?,
+            HandshakeChoice::Kx => "Noise_KX_25519_ChaChaPoly_SHA256"
+                .parse()
+                .map_err(|e| Error::Noise(format!("Invalid Noise Pattern: {}", e)))?,
+        };
+        Ok(noise_params)
+    }
+
+    /// Revault must specify the SodiumResolver to use sodiumoxide as the cryptography provider
+    /// when generating a static key pair for secure communication.
+    fn generate_keypair(noise_params: NoiseParams) -> Keypair {
+        Builder::with_resolver(noise_params, Box::new(SodiumResolver::default()))
+            .generate_keypair()
+            .unwrap()
+    }
+
+    #[test]
+    fn test_kx_handshake_encrypted_transport() {
+        let hs_choice = HandshakeChoice::Kx;
+        let noise_params = get_noise_params(&hs_choice).unwrap();
+
+        // key gen
+        let initiator_keypair = generate_keypair(noise_params.clone());
+        let initiator_privkey = NoisePrivKey(initiator_keypair.private[..].try_into().unwrap());
+        let initiator_pubkey = NoisePubKey(initiator_keypair.public[..].try_into().unwrap());
+
+        let responder_keypair = generate_keypair(noise_params);
+        let responder_privkey = NoisePrivKey(responder_keypair.private[..].try_into().unwrap());
+
+        // client
+        let (cli_act_1, msg_1) = KXHandshakeActOne::initiator(&initiator_privkey).unwrap();
+
+        // server
+        let serv_act_1 =
+            KXHandshakeActOne::responder(&responder_privkey, &initiator_pubkey, &msg_1).unwrap();
+        let (serv_act_2, msg_2) = KXHandshakeActTwo::responder(serv_act_1).unwrap();
+        let mut server_channel = KXChannel::from_handshake(serv_act_2).unwrap();
+
+        // client
+        let cli_act_2 = KXHandshakeActTwo::initiator(cli_act_1, &msg_2).unwrap();
+        let mut client_channel = KXChannel::from_handshake(cli_act_2).unwrap();
+
+        // client encrypts message for server
+        let msg = "Hello".as_bytes();
+        let encrypted_msg = encrypt_message(&mut client_channel, &msg).unwrap();
+        let decrypted_msg = decrypt_message(&mut server_channel, &encrypted_msg).unwrap();
+        assert_eq!(msg.to_vec(), decrypted_msg);
+
+        // server encrypts message for client
+        let msg = "Goodbye".as_bytes();
+        let encrypted_msg = encrypt_message(&mut server_channel, &msg).unwrap();
+        let decrypted_msg = decrypt_message(&mut client_channel, &encrypted_msg).unwrap();
+        assert_eq!(msg.to_vec(), decrypted_msg);
+    }
+
+    #[test]
+    fn test_kk_handshake_encrypted_transport() {
+        let hs_choice = HandshakeChoice::Kk;
+        let noise_params = get_noise_params(&hs_choice).unwrap();
+
+        // key gen
+        let initiator_keypair = generate_keypair(noise_params.clone());
+        let initiator_privkey = NoisePrivKey(initiator_keypair.private[..].try_into().unwrap());
+        let initiator_pubkey = NoisePubKey(initiator_keypair.public[..].try_into().unwrap());
+
+        let responder_keypair = generate_keypair(noise_params);
+        let responder_privkey = NoisePrivKey(responder_keypair.private[..].try_into().unwrap());
+        let responder_pubkey = NoisePubKey(responder_keypair.public[..].try_into().unwrap());
+
+        // client
+        let (cli_act_1, msg_1) =
+            KKHandshakeActOne::initiator(&initiator_privkey, &responder_pubkey).unwrap();
+
+        // server
+        let serv_act_1 =
+            KKHandshakeActOne::responder(&responder_privkey, &initiator_pubkey, &msg_1).unwrap();
+        let (serv_act_2, msg_2) = KKHandshakeActTwo::responder(serv_act_1).unwrap();
+        let mut server_channel = KKChannel::from_handshake(serv_act_2).unwrap();
+
+        // client
+        let cli_act_2 = KKHandshakeActTwo::initiator(cli_act_1, &msg_2).unwrap();
+        let mut client_channel = KKChannel::from_handshake(cli_act_2).unwrap();
+
+        // client encrypts message for server
+        let msg = "Hello".as_bytes();
+        let encrypted_msg = encrypt_message(&mut client_channel, &msg).unwrap();
+        let decrypted_msg = decrypt_message(&mut server_channel, &encrypted_msg).unwrap();
+        assert_eq!(msg.to_vec(), decrypted_msg);
+
+        // server encrypts message for client
+        let msg = "Goodbye".as_bytes();
+        let encrypted_msg = encrypt_message(&mut server_channel, &msg).unwrap();
+        let decrypted_msg = decrypt_message(&mut client_channel, &encrypted_msg).unwrap();
+        assert_eq!(msg.to_vec(), decrypted_msg);
+    }
+
+    #[test]
+    fn test_message_size_limit_and_padding() {
+        let hs_choice = HandshakeChoice::Kx;
+        let noise_params = get_noise_params(&hs_choice).unwrap();
+
+        // key gen
+        let initiator_keypair = generate_keypair(noise_params.clone());
+        let initiator_privkey = NoisePrivKey(initiator_keypair.private[..].try_into().unwrap());
+        let initiator_pubkey = NoisePubKey(initiator_keypair.public[..].try_into().unwrap());
+
+        let responder_keypair = generate_keypair(noise_params);
+        let responder_privkey = NoisePrivKey(responder_keypair.private[..].try_into().unwrap());
+
+        // client
+        let (_cli_act_1, msg_1) = KXHandshakeActOne::initiator(&initiator_privkey).unwrap();
+
+        // server
+        let serv_act_1 =
+            KXHandshakeActOne::responder(&responder_privkey, &initiator_pubkey, &msg_1).unwrap();
+        let (serv_act_2, _msg_2) = KXHandshakeActTwo::responder(serv_act_1).unwrap();
+        let mut server_channel = KXChannel::from_handshake(serv_act_2).unwrap();
+
+        // Fail if msg too large
+        let msg = [0u8; NOISE_MESSAGE_MAX_SIZE - NOISE_MESSAGE_HEADER_SIZE + 1];
+        assert!(encrypt_message(&mut server_channel, &msg).is_err());
+
+        // Test if padding hides message size
+        let msg_a = "".as_bytes();
+        let ciphertext_a = encrypt_message(&mut server_channel, &msg_a).unwrap();
+
+        let msg_b = [0u8; NOISE_PADDED_MESSAGE_SIZE];
+        let ciphertext_b = encrypt_message(&mut server_channel, &msg_b).unwrap();
+
+        assert_eq!(ciphertext_a.0.len(), ciphertext_b.0.len());
+    }
 }

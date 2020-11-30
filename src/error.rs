@@ -9,8 +9,6 @@ pub enum Error {
     Message(String),
     /// Error while using snow API
     Noise(String),
-    /// Error while using entity map
-    EntityMap(String),
 }
 
 impl fmt::Display for Error {
@@ -18,7 +16,6 @@ impl fmt::Display for Error {
         match *self {
             Error::Message(ref e) => write!(f, "Message Error: {}", e),
             Error::Noise(ref e) => write!(f, "Noise Error: {}", e),
-            Error::EntityMap(ref e) => write!(f, "Entity Map Error: {}", e),
         }
     }
 }
