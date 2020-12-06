@@ -43,6 +43,7 @@ pub struct KXHandshakeActOne {
     state: HandshakeState,
 }
 
+/// Message sent during the first round of the KX handshake (e with no tag)
 #[derive(Debug)]
 pub struct KXMessageActOne(pub(crate) [u8; KX_MSG_1_SIZE]);
 
@@ -123,6 +124,7 @@ pub struct KXHandshakeActTwo {
     state: HandshakeState,
 }
 
+/// Message sent during the second round of the KX handshake (e, ee, se, s, es)
 #[derive(Debug)]
 pub struct KXMessageActTwo(pub(crate) [u8; KX_MSG_2_SIZE]);
 
@@ -170,6 +172,7 @@ pub struct KXChannel {
 }
 
 impl KXChannel {
+    /// Create a Noise transport channel out of a succesfull handshake
     pub fn from_handshake(state: KXHandshakeActTwo) -> Result<KXChannel, Error> {
         let transport_state = state
             .state
@@ -180,12 +183,13 @@ impl KXChannel {
     }
 }
 
-/// First round of the handshake
+/// First round of the KK handshake
 #[derive(Debug)]
 pub struct KKHandshakeActOne {
     state: HandshakeState,
 }
 
+/// Message sent during the first round of the KK handshake (e, es, ss)
 #[derive(Debug)]
 pub struct KKMessageActOne(pub(crate) [u8; KK_MSG_1_SIZE]);
 
@@ -264,7 +268,7 @@ pub struct KKHandshakeActTwo {
     state: HandshakeState,
 }
 
-/// Content of the message from the final round of the handshake
+/// Content of the message from the final round of the KK handshake (e, ee, se)
 #[derive(Debug)]
 pub struct KKMessageActTwo(pub(crate) [u8; KK_MSG_2_SIZE]);
 
