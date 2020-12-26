@@ -44,12 +44,9 @@ impl KXTransport {
 
         // read msg_2 from stream (e, ee, se, s, es)
         let mut msg_2 = [0u8; KX_MSG_2_SIZE];
-        let mut read = 0;
-        while read < KX_MSG_2_SIZE {
-            read += stream.read(&mut msg_2).map_err(|e| {
-                Error::Transport(format!("Failed to read message 2 from TcpStream: {:?}", e))
-            })?;
-        }
+        stream.read_exact(&mut msg_2).map_err(|e| {
+            Error::Transport(format!("Failed to read message 2 from TcpStream: {:?}", e))
+        })?;
 
         let msg_act_2 = KXMessageActTwo(msg_2);
         let cli_act_2 = KXHandshakeActTwo::initiator(cli_act_1, &msg_act_2)
@@ -73,7 +70,7 @@ impl KXTransport {
 
         // read msg_1 from stream
         let mut msg_1 = [0u8; KX_MSG_1_SIZE];
-        stream.read(&mut msg_1).map_err(|e| {
+        stream.read_exact(&mut msg_1).map_err(|e| {
             Error::Transport(format!("Failed to read message 1 from TcpStream: {:?}", e))
         })?;
         let msg_act_1 = KXMessageActOne(msg_1);
@@ -150,12 +147,9 @@ impl KKTransport {
 
         // read msg_2 from stream (e, ee, se)
         let mut msg_2 = [0u8; KK_MSG_2_SIZE];
-        let mut read = 0;
-        while read < KK_MSG_2_SIZE {
-            read += stream.read(&mut msg_2).map_err(|e| {
-                Error::Transport(format!("Failed to read message 2 from TcpStream: {:?}", e))
-            })?;
-        }
+        stream.read_exact(&mut msg_2).map_err(|e| {
+            Error::Transport(format!("Failed to read message 2 from TcpStream: {:?}", e))
+        })?;
 
         let msg_act_2 = KKMessageActTwo(msg_2);
         let cli_act_2 = KKHandshakeActTwo::initiator(cli_act_1, &msg_act_2)
@@ -179,7 +173,7 @@ impl KKTransport {
 
         // read msg_1 from stream
         let mut msg_1 = [0u8; KK_MSG_1_SIZE];
-        stream.read(&mut msg_1).map_err(|e| {
+        stream.read_exact(&mut msg_1).map_err(|e| {
             Error::Transport(format!("Failed to read message 1 from TcpStream: {:?}", e))
         })?;
         let msg_act_1 = KKMessageActOne(msg_1);
