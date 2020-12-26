@@ -16,38 +16,6 @@ use crate::{
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 
-// FIXME: implement constructor for ChannelInputs that reads from config file
-// and priv_key storage. Make my_noise_privkey field private.
-/// Authenticated and encrypted channels are set up with each TCP connection,
-/// thus requiring the local static private key and optionally the remote
-/// public key as inputs.
-pub struct ChannelInputs {
-    /// Local static private key
-    pub my_noise_privkey: NoisePrivKey,
-    /// Remote static public key
-    pub their_noise_pubkey: Option<NoisePubKey>,
-}
-
-/// The Transport trait defines the general API for communication between a Revault server and client
-pub trait Transport {
-    /// Called by Revault client; connect to server at given address, and enact Noise handshake
-    /// with given channel inputs.
-    fn connect<A: ToSocketAddrs>(addr: A, channel_inputs: ChannelInputs) -> Result<Self, Error>
-    where
-        Self: std::marker::Sized;
-    /// Called by Revault server; listen for connections on given address, and enact Noise handshake
-    /// with given channel inputs.
-    fn bind_accept<A: ToSocketAddrs>(addr: A, channel_inputs: ChannelInputs) -> Result<Self, Error>
-    where
-        Self: std::marker::Sized;
-    /// Send message using the TcpStream and NoiseChannel that has been constructed either with
-    /// connect() or bind_accept()
-    fn send_msg(&mut self, msg: &[u8]) -> Result<(), Error>;
-    /// Receive message using the TcpStream and NoiseChannel that has been constructed either with
-    /// connect() or bind_accept()
-    fn receive_msg(&mut self) -> Result<Vec<u8>, Error>;
-}
-
 /// Wrapper type for a TcpStream and KXChannel that automatically enforces authenticated and
 /// encrypted channels when communicating
 #[derive(Debug)]
@@ -56,15 +24,16 @@ pub struct KXTransport {
     channel: KXChannel,
 }
 
-impl Transport for KXTransport {
-    fn connect<A: ToSocketAddrs>(
+impl KXTransport {
+    /// Connect to server at given address, and enact Noise handshake with given private key.
+    pub fn connect<A: ToSocketAddrs>(
         addr: A,
-        channel_inputs: ChannelInputs,
+        my_noise_privkey: NoisePrivKey,
     ) -> Result<KXTransport, Error> {
         let mut stream = TcpStream::connect(addr)
             .map_err(|e| Error::Transport(format!("TCP connection failed: {:?}", e)))?;
 
-        let (cli_act_1, msg_1) = KXHandshakeActOne::initiator(&channel_inputs.my_noise_privkey)
+        let (cli_act_1, msg_1) = KXHandshakeActOne::initiator(&my_noise_privkey)
             .map_err(|e| Error::Noise(format!("Failed to initiate act 1: {:?}", e)))?;
 
         // write msg_1 to stream (e)
@@ -90,9 +59,10 @@ impl Transport for KXTransport {
         Ok(KXTransport { stream, channel })
     }
 
-    fn bind_accept<A: ToSocketAddrs>(
+    pub fn bind_accept<A: ToSocketAddrs>(
         addr: A,
-        channel_inputs: ChannelInputs,
+        my_noise_privkey: NoisePrivKey,
+        their_noise_pubkey: NoisePubKey,
     ) -> Result<KXTransport, Error> {
         let listener = TcpListener::bind(addr)
             .map_err(|e| Error::Transport(format!("TCP binding failed: {:?}", e)))?;
@@ -107,12 +77,9 @@ impl Transport for KXTransport {
         })?;
         let msg_act_1 = KXMessageActOne(msg_1);
 
-        let serv_act_1 = KXHandshakeActOne::responder(
-            &channel_inputs.my_noise_privkey,
-            &channel_inputs.their_noise_pubkey.unwrap(),
-            &msg_act_1,
-        )
-        .map_err(|e| Error::Noise(format!("Failed to respond in act 1: {:?}", e)))?;
+        let serv_act_1 =
+            KXHandshakeActOne::responder(&my_noise_privkey, &their_noise_pubkey, &msg_act_1)
+                .map_err(|e| Error::Noise(format!("Failed to respond in act 1: {:?}", e)))?;
         let (serv_act_2, msg_2) = KXHandshakeActTwo::responder(serv_act_1)
             .map_err(|e| Error::Noise(format!("Failed to respond in act 2: {:?}", e)))?;
         let channel = KXChannel::from_handshake(serv_act_2)
@@ -126,7 +93,7 @@ impl Transport for KXTransport {
         Ok(KXTransport { stream, channel })
     }
 
-    fn send_msg(&mut self, msg: &[u8]) -> Result<(), Error> {
+    pub fn send_msg(&mut self, msg: &[u8]) -> Result<(), Error> {
         // Encrypt a serialized msg using KXChannel
         let encrypted_msg = encrypt_message(&mut self.channel, msg)?.0;
         // Send encrypted msg through TcpStream
@@ -140,7 +107,7 @@ impl Transport for KXTransport {
         Ok(())
     }
 
-    fn receive_msg(&mut self) -> Result<Vec<u8>, Error> {
+    pub fn receive_msg(&mut self) -> Result<Vec<u8>, Error> {
         // Recieve encrypted msg from the TcpStream
         let mut encrypted_msg = vec![0u8; NOISE_MESSAGE_MAX_SIZE];
 
@@ -165,19 +132,19 @@ pub struct KKTransport {
     channel: KKChannel,
 }
 
-impl Transport for KKTransport {
-    fn connect<A: ToSocketAddrs>(
+impl KKTransport {
+    /// Connect to server at given address, and enact Noise handshake with given private key.
+    pub fn connect<A: ToSocketAddrs>(
         addr: A,
-        channel_inputs: ChannelInputs,
+        my_noise_privkey: NoisePrivKey,
+        their_noise_pubkey: NoisePubKey,
     ) -> Result<KKTransport, Error> {
         let mut stream = TcpStream::connect(addr)
             .map_err(|e| Error::Transport(format!("TCP connection failed: {:?}", e)))?;
 
-        let (cli_act_1, msg_1) = KKHandshakeActOne::initiator(
-            &channel_inputs.my_noise_privkey,
-            &channel_inputs.their_noise_pubkey.unwrap(),
-        )
-        .map_err(|e| Error::Noise(format!("Failed to initiate act 1: {:?}", e)))?;
+        let (cli_act_1, msg_1) =
+            KKHandshakeActOne::initiator(&my_noise_privkey, &their_noise_pubkey)
+                .map_err(|e| Error::Noise(format!("Failed to initiate act 1: {:?}", e)))?;
 
         // write msg_1 to stream (e, es, ss)
         stream.write_all(&msg_1.0).map_err(|e| {
@@ -202,9 +169,10 @@ impl Transport for KKTransport {
         Ok(KKTransport { stream, channel })
     }
 
-    fn bind_accept<A: ToSocketAddrs>(
+    pub fn bind_accept<A: ToSocketAddrs>(
         addr: A,
-        channel_inputs: ChannelInputs,
+        my_noise_privkey: NoisePrivKey,
+        their_noise_pubkey: NoisePubKey,
     ) -> Result<KKTransport, Error> {
         let listener = TcpListener::bind(addr)
             .map_err(|e| Error::Transport(format!("TCP binding failed: {:?}", e)))?;
@@ -219,12 +187,9 @@ impl Transport for KKTransport {
         })?;
         let msg_act_1 = KKMessageActOne(msg_1);
 
-        let serv_act_1 = KKHandshakeActOne::responder(
-            &channel_inputs.my_noise_privkey,
-            &channel_inputs.their_noise_pubkey.unwrap(),
-            &msg_act_1,
-        )
-        .map_err(|e| Error::Noise(format!("Failed to respond in act 1: {:?}", e)))?;
+        let serv_act_1 =
+            KKHandshakeActOne::responder(&my_noise_privkey, &their_noise_pubkey, &msg_act_1)
+                .map_err(|e| Error::Noise(format!("Failed to respond in act 1: {:?}", e)))?;
         let (serv_act_2, msg_2) = KKHandshakeActTwo::responder(serv_act_1)
             .map_err(|e| Error::Noise(format!("Failed to respond in act 2: {:?}", e)))?;
         let channel = KKChannel::from_handshake(serv_act_2)
@@ -238,7 +203,7 @@ impl Transport for KKTransport {
         Ok(KKTransport { stream, channel })
     }
 
-    fn send_msg(&mut self, msg: &[u8]) -> Result<(), Error> {
+    pub fn send_msg(&mut self, msg: &[u8]) -> Result<(), Error> {
         // Encrypt a serialized msg using KKChannel
         let encrypted_msg = encrypt_message(&mut self.channel, msg)?.0;
         // Send encrypted msg through TcpStream
@@ -252,7 +217,7 @@ impl Transport for KKTransport {
         Ok(())
     }
 
-    fn receive_msg(&mut self) -> Result<Vec<u8>, Error> {
+    pub fn receive_msg(&mut self) -> Result<Vec<u8>, Error> {
         // Recieve encrypted msg from the TcpStream
         let mut encrypted_msg = vec![0u8; NOISE_MESSAGE_MAX_SIZE];
         self.stream.read(&mut encrypted_msg).map_err(|e| {
@@ -319,14 +284,11 @@ mod tests {
         // server thread
         let serv_thread = thread::spawn(move || {
             let my_noise_privkey = NoisePrivKey(server_keypair.private[..].try_into().unwrap());
-            let their_noise_pubkey = Some(client_pubkey);
-            let serv_channel_inputs = ChannelInputs {
-                my_noise_privkey,
-                their_noise_pubkey,
-            };
+            let their_noise_pubkey = client_pubkey;
 
-            let mut server_channel = KXTransport::bind_accept(addrs.clone(), serv_channel_inputs)
-                .expect("Server channel binding and accepting");
+            let mut server_channel =
+                KXTransport::bind_accept(addrs.clone(), my_noise_privkey, their_noise_pubkey)
+                    .expect("Server channel binding and accepting");
             thread::sleep(Duration::from_millis(10));
             server_channel.receive_msg().unwrap()
         });
@@ -334,13 +296,8 @@ mod tests {
         // client thread
         let cli_thread = thread::spawn(move || {
             let my_noise_privkey = NoisePrivKey(client_keypair.private[..].try_into().unwrap());
-            let their_noise_pubkey = None;
-            let cli_channel_inputs = ChannelInputs {
-                my_noise_privkey,
-                their_noise_pubkey,
-            };
 
-            let mut cli_channel = KXTransport::connect(addrs.clone(), cli_channel_inputs)
+            let mut cli_channel = KXTransport::connect(addrs.clone(), my_noise_privkey)
                 .expect("Client channel connecting");
             let msg = "Test message".as_bytes();
             cli_channel.send_msg(&msg).expect("Sending test message");
@@ -373,14 +330,11 @@ mod tests {
         // server thread
         let serv_thread = thread::spawn(move || {
             let my_noise_privkey = NoisePrivKey(server_keypair.private[..].try_into().unwrap());
-            let their_noise_pubkey = Some(client_pubkey);
-            let serv_channel_inputs = ChannelInputs {
-                my_noise_privkey,
-                their_noise_pubkey,
-            };
+            let their_noise_pubkey = client_pubkey;
 
-            let mut server_channel = KKTransport::bind_accept(addrs.clone(), serv_channel_inputs)
-                .expect("Server channel binding and accepting");
+            let mut server_channel =
+                KKTransport::bind_accept(addrs.clone(), my_noise_privkey, their_noise_pubkey)
+                    .expect("Server channel binding and accepting");
             thread::sleep(Duration::from_millis(10));
             server_channel.receive_msg().unwrap()
         });
@@ -388,14 +342,11 @@ mod tests {
         // client thread
         let cli_thread = thread::spawn(move || {
             let my_noise_privkey = NoisePrivKey(client_keypair.private[..].try_into().unwrap());
-            let their_noise_pubkey = Some(server_pubkey);
-            let cli_channel_inputs = ChannelInputs {
-                my_noise_privkey,
-                their_noise_pubkey,
-            };
+            let their_noise_pubkey = server_pubkey;
 
-            let mut cli_channel = KKTransport::connect(addrs.clone(), cli_channel_inputs)
-                .expect("Client channel connecting");
+            let mut cli_channel =
+                KKTransport::connect(addrs.clone(), my_noise_privkey, their_noise_pubkey)
+                    .expect("Client channel connecting");
             let msg = "Test message".as_bytes();
             cli_channel.send_msg(&msg).expect("Sending test message");
             msg
