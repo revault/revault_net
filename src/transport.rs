@@ -13,7 +13,7 @@ use crate::{
         KK_MSG_1_SIZE, KK_MSG_2_SIZE, KX_MSG_1_SIZE, KX_MSG_2_SIZE, NOISE_MESSAGE_MAX_SIZE,
     },
 };
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 
 /// Wrapper type for a TcpStream and KXChannel that automatically enforces authenticated and
@@ -105,13 +105,28 @@ impl KXTransport {
     /// Read a message from the other end of the encrypted communication channel.
     pub fn read(&mut self) -> Result<Vec<u8>, Error> {
         let mut encrypted_msg = vec![0u8; NOISE_MESSAGE_MAX_SIZE];
+        let mut bytes_read = 0;
 
-        self.stream.read(&mut encrypted_msg).map_err(|e| {
-            Error::Transport(format!(
-                "Failed to read encrypted message from TcpStream: {:?}",
-                e
-            ))
-        })?;
+        // Note that read_to_end() will read thousands of bytes for whatever reason
+        // so we emulate it here.
+        loop {
+            match self.stream.read(&mut encrypted_msg) {
+                Ok(0) => break,
+                Ok(n) => bytes_read += n,
+                Err(e) => match e.kind() {
+                    // Fine, we may have gotten the message anyways. They just aren't polite
+                    io::ErrorKind::WouldBlock
+                    | io::ErrorKind::Interrupted
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::ConnectionAborted
+                    | io::ErrorKind::BrokenPipe => break,
+                    // That's actually bad
+                    _ => return Err(Error::Transport(format!("Reading from stream: '{}'", e))),
+                },
+                _ => continue,
+            };
+        }
+        encrypted_msg.truncate(bytes_read);
 
         let encrypted_msg = NoiseEncryptedMessage(encrypted_msg);
         decrypt_message(&mut self.channel, &encrypted_msg)
@@ -208,13 +223,28 @@ impl KKTransport {
     /// Read a message from the other end of the encrypted communication channel.
     pub fn read(&mut self) -> Result<Vec<u8>, Error> {
         let mut encrypted_msg = vec![0u8; NOISE_MESSAGE_MAX_SIZE];
+        let mut bytes_read = 0;
 
-        self.stream.read(&mut encrypted_msg).map_err(|e| {
-            Error::Transport(format!(
-                "Failed to read encrypted message from TcpStream: {:?}",
-                e
-            ))
-        })?;
+        // Note that read_to_end() will read thousands of bytes for whatever reason
+        // so we emulate it here.
+        loop {
+            match self.stream.read(&mut encrypted_msg) {
+                Ok(0) => break,
+                Ok(n) => bytes_read += n,
+                Err(e) => match e.kind() {
+                    // Fine, we may have gotten the message anyways. They just aren't polite
+                    io::ErrorKind::WouldBlock
+                    | io::ErrorKind::Interrupted
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::ConnectionAborted
+                    | io::ErrorKind::BrokenPipe => break,
+                    // That's actually bad
+                    _ => return Err(Error::Transport(format!("Reading from stream: '{}'", e))),
+                },
+                _ => continue,
+            };
+        }
+        encrypted_msg.truncate(bytes_read);
 
         let encrypted_msg = NoiseEncryptedMessage(encrypted_msg);
         decrypt_message(&mut self.channel, &encrypted_msg)
