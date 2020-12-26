@@ -94,22 +94,19 @@ impl KXTransport {
         Ok(KXTransport { stream, channel })
     }
 
-    pub fn send_msg(&mut self, msg: &[u8]) -> Result<(), Error> {
-        // Encrypt a serialized msg using KXChannel
+    /// Write a message to the other end of the encrypted communication channel.
+    pub fn write(&mut self, msg: &[u8]) -> Result<(), Error> {
         let encrypted_msg = encrypt_message(&mut self.channel, msg)?.0;
-        // Send encrypted msg through TcpStream
         self.stream.write_all(&encrypted_msg).map_err(|e| {
             Error::Transport(format!(
                 "Failed to send encrypted message with TcpStream: {:?}",
                 e
             ))
-        })?;
-
-        Ok(())
+        })
     }
 
-    pub fn receive_msg(&mut self) -> Result<Vec<u8>, Error> {
-        // Recieve encrypted msg from the TcpStream
+    /// Read a message from the other end of the encrypted communication channel.
+    pub fn read(&mut self) -> Result<Vec<u8>, Error> {
         let mut encrypted_msg = vec![0u8; NOISE_MESSAGE_MAX_SIZE];
 
         self.stream.read(&mut encrypted_msg).map_err(|e| {
@@ -120,8 +117,7 @@ impl KXTransport {
         })?;
 
         let encrypted_msg = NoiseEncryptedMessage(encrypted_msg);
-        // Decrypt msg using KXChannel
-        Ok(decrypt_message(&mut self.channel, &encrypted_msg)?)
+        decrypt_message(&mut self.channel, &encrypted_msg)
     }
 }
 
@@ -204,32 +200,30 @@ impl KKTransport {
         Ok(KKTransport { stream, channel })
     }
 
-    pub fn send_msg(&mut self, msg: &[u8]) -> Result<(), Error> {
-        // Encrypt a serialized msg using KKChannel
+    /// Write a message to the other end of the encrypted communication channel.
+    pub fn write(&mut self, msg: &[u8]) -> Result<(), Error> {
         let encrypted_msg = encrypt_message(&mut self.channel, msg)?.0;
-        // Send encrypted msg through TcpStream
         self.stream.write_all(&encrypted_msg).map_err(|e| {
             Error::Transport(format!(
                 "Failed to send encrypted message with TcpStream: {:?}",
                 e
             ))
-        })?;
-
-        Ok(())
+        })
     }
 
-    pub fn receive_msg(&mut self) -> Result<Vec<u8>, Error> {
-        // Recieve encrypted msg from the TcpStream
+    /// Read a message from the other end of the encrypted communication channel.
+    pub fn read(&mut self) -> Result<Vec<u8>, Error> {
         let mut encrypted_msg = vec![0u8; NOISE_MESSAGE_MAX_SIZE];
+
         self.stream.read(&mut encrypted_msg).map_err(|e| {
             Error::Transport(format!(
                 "Failed to read encrypted message from TcpStream: {:?}",
                 e
             ))
         })?;
+
         let encrypted_msg = NoiseEncryptedMessage(encrypted_msg);
-        // Decrypt msg using KKChannel
-        Ok(decrypt_message(&mut self.channel, &encrypted_msg)?)
+        decrypt_message(&mut self.channel, &encrypted_msg)
     }
 }
 
@@ -292,7 +286,7 @@ mod tests {
                 KXTransport::accept(listener, my_noise_privkey, their_noise_pubkey)
                     .expect("Server channel binding and accepting");
             thread::sleep(Duration::from_millis(10));
-            server_channel.receive_msg().unwrap()
+            server_channel.read().unwrap()
         });
 
         // client thread
@@ -302,7 +296,7 @@ mod tests {
             let mut cli_channel =
                 KXTransport::connect(addr, my_noise_privkey).expect("Client channel connecting");
             let msg = "Test message".as_bytes();
-            cli_channel.send_msg(&msg).expect("Sending test message");
+            cli_channel.write(&msg).expect("Sending test message");
             msg
         });
 
@@ -339,7 +333,7 @@ mod tests {
                 KKTransport::accept(listener, my_noise_privkey, their_noise_pubkey)
                     .expect("Server channel binding and accepting");
             thread::sleep(Duration::from_millis(10));
-            server_channel.receive_msg().unwrap()
+            server_channel.read().unwrap()
         });
 
         // client thread
@@ -350,7 +344,7 @@ mod tests {
             let mut cli_channel = KKTransport::connect(addr, my_noise_privkey, their_noise_pubkey)
                 .expect("Client channel connecting");
             let msg = "Test message".as_bytes();
-            cli_channel.send_msg(&msg).expect("Sending test message");
+            cli_channel.write(&msg).expect("Sending test message");
             msg
         });
 
