@@ -25,7 +25,8 @@ pub struct KXTransport {
 }
 
 impl KXTransport {
-    /// Connect to server at given address, and enact Noise handshake with given private key.
+    /// Perform an outgoing connection to the given address, and enact Noise KK handshake
+    /// with the given private key.
     pub fn connect<A: ToSocketAddrs>(
         addr: A,
         my_noise_privkey: NoisePrivKey,
@@ -59,14 +60,14 @@ impl KXTransport {
         Ok(KXTransport { stream, channel })
     }
 
-    pub fn bind_accept<A: ToSocketAddrs>(
-        addr: A,
+    /// Accept an incoming connection and immediately perform the noise KX handshake
+    /// as a responder with the given keys.
+    pub fn accept(
+        listener: TcpListener,
         my_noise_privkey: NoisePrivKey,
         their_noise_pubkey: NoisePubKey,
     ) -> Result<KXTransport, Error> {
-        let listener = TcpListener::bind(addr)
-            .map_err(|e| Error::Transport(format!("TCP binding failed: {:?}", e)))?;
-        let (mut stream, _addr) = listener
+        let (mut stream, _) = listener
             .accept()
             .map_err(|e| Error::Transport(format!("TCP accept failed: {:?}", e)))?;
 
@@ -169,14 +170,14 @@ impl KKTransport {
         Ok(KKTransport { stream, channel })
     }
 
-    pub fn bind_accept<A: ToSocketAddrs>(
-        addr: A,
+    /// Accept an incoming connection and immediately perform the noise KX handshake
+    /// as a responder with the given keys.
+    pub fn accept(
+        listener: TcpListener,
         my_noise_privkey: NoisePrivKey,
         their_noise_pubkey: NoisePubKey,
     ) -> Result<KKTransport, Error> {
-        let listener = TcpListener::bind(addr)
-            .map_err(|e| Error::Transport(format!("TCP binding failed: {:?}", e)))?;
-        let (mut stream, _addr) = listener
+        let (mut stream, _) = listener
             .accept()
             .map_err(|e| Error::Transport(format!("TCP accept failed: {:?}", e)))?;
 
@@ -285,9 +286,10 @@ mod tests {
         let serv_thread = thread::spawn(move || {
             let my_noise_privkey = NoisePrivKey(server_keypair.private[..].try_into().unwrap());
             let their_noise_pubkey = client_pubkey;
+            let listener = TcpListener::bind(addrs.clone()).unwrap();
 
             let mut server_channel =
-                KXTransport::bind_accept(addrs.clone(), my_noise_privkey, their_noise_pubkey)
+                KXTransport::accept(listener, my_noise_privkey, their_noise_pubkey)
                     .expect("Server channel binding and accepting");
             thread::sleep(Duration::from_millis(10));
             server_channel.receive_msg().unwrap()
@@ -331,9 +333,10 @@ mod tests {
         let serv_thread = thread::spawn(move || {
             let my_noise_privkey = NoisePrivKey(server_keypair.private[..].try_into().unwrap());
             let their_noise_pubkey = client_pubkey;
+            let listener = TcpListener::bind(addrs.clone()).unwrap();
 
             let mut server_channel =
-                KKTransport::bind_accept(addrs.clone(), my_noise_privkey, their_noise_pubkey)
+                KKTransport::accept(listener, my_noise_privkey, their_noise_pubkey)
                     .expect("Server channel binding and accepting");
             thread::sleep(Duration::from_millis(10));
             server_channel.receive_msg().unwrap()
