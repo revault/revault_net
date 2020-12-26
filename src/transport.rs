@@ -232,8 +232,8 @@ mod tests {
     use super::*;
     use crate::error::Error;
     use snow::{params::NoiseParams, resolvers::SodiumResolver, Builder, Keypair};
+    use std::convert::TryInto;
     use std::thread;
-    use std::{convert::TryInto, time::Duration};
 
     #[derive(Debug, Clone)]
     pub enum HandshakeChoice {
@@ -268,26 +268,16 @@ mod tests {
         let cli_noise_params = get_noise_params(&cli_handshake_choice).unwrap();
         let client_keypair = generate_keypair(cli_noise_params.clone());
 
-        //server init
+        // server init
         let serv_handshake_choice = HandshakeChoice::Kx;
         let serv_noise_params = get_noise_params(&serv_handshake_choice).unwrap();
         let server_keypair = generate_keypair(serv_noise_params.clone());
+
+        let serv_privkey = NoisePrivKey(server_keypair.private[..].try_into().unwrap());
         let client_pubkey = NoisePubKey(client_keypair.public[..].try_into().unwrap());
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-
-        // server thread
-        let serv_thread = thread::spawn(move || {
-            let my_noise_privkey = NoisePrivKey(server_keypair.private[..].try_into().unwrap());
-            let their_noise_pubkey = client_pubkey;
-
-            let mut server_channel =
-                KXTransport::accept(listener, my_noise_privkey, their_noise_pubkey)
-                    .expect("Server channel binding and accepting");
-            thread::sleep(Duration::from_millis(10));
-            server_channel.read().unwrap()
-        });
 
         // client thread
         let cli_thread = thread::spawn(move || {
@@ -300,8 +290,11 @@ mod tests {
             msg
         });
 
-        let received_msg = serv_thread.join().unwrap();
+        let mut server_transport = KXTransport::accept(listener, serv_privkey, client_pubkey)
+            .expect("Server channel binding and accepting");
+
         let sent_msg = cli_thread.join().unwrap();
+        let received_msg = server_transport.read().unwrap();
         assert_eq!(sent_msg.to_vec(), received_msg);
     }
 
@@ -316,25 +309,13 @@ mod tests {
         let serv_handshake_choice = HandshakeChoice::Kk;
         let serv_noise_params = get_noise_params(&serv_handshake_choice).unwrap();
         let server_keypair = generate_keypair(serv_noise_params.clone());
-        let client_pubkey = NoisePubKey(client_keypair.public[..].try_into().unwrap());
 
-        // client init part 2
+        let client_pubkey = NoisePubKey(client_keypair.public[..].try_into().unwrap());
         let server_pubkey = NoisePubKey(server_keypair.public[..].try_into().unwrap());
+        let server_privkey = NoisePrivKey(server_keypair.private[..].try_into().unwrap());
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-
-        // server thread
-        let serv_thread = thread::spawn(move || {
-            let my_noise_privkey = NoisePrivKey(server_keypair.private[..].try_into().unwrap());
-            let their_noise_pubkey = client_pubkey;
-
-            let mut server_channel =
-                KKTransport::accept(listener, my_noise_privkey, their_noise_pubkey)
-                    .expect("Server channel binding and accepting");
-            thread::sleep(Duration::from_millis(10));
-            server_channel.read().unwrap()
-        });
 
         // client thread
         let cli_thread = thread::spawn(move || {
@@ -348,8 +329,11 @@ mod tests {
             msg
         });
 
-        let received_msg = serv_thread.join().unwrap();
+        let mut server_transport = KKTransport::accept(listener, server_privkey, client_pubkey)
+            .expect("Server channel binding and accepting");
+
         let sent_msg = cli_thread.join().unwrap();
+        let received_msg = server_transport.read().unwrap();
         assert_eq!(sent_msg.to_vec(), received_msg);
     }
 }
