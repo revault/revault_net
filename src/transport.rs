@@ -280,13 +280,13 @@ mod tests {
         let server_keypair = generate_keypair(serv_noise_params.clone());
         let client_pubkey = NoisePubKey(client_keypair.public[..].try_into().unwrap());
 
-        let addrs = "127.0.0.1:8000";
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
 
         // server thread
         let serv_thread = thread::spawn(move || {
             let my_noise_privkey = NoisePrivKey(server_keypair.private[..].try_into().unwrap());
             let their_noise_pubkey = client_pubkey;
-            let listener = TcpListener::bind(addrs.clone()).unwrap();
 
             let mut server_channel =
                 KXTransport::accept(listener, my_noise_privkey, their_noise_pubkey)
@@ -299,8 +299,8 @@ mod tests {
         let cli_thread = thread::spawn(move || {
             let my_noise_privkey = NoisePrivKey(client_keypair.private[..].try_into().unwrap());
 
-            let mut cli_channel = KXTransport::connect(addrs.clone(), my_noise_privkey)
-                .expect("Client channel connecting");
+            let mut cli_channel =
+                KXTransport::connect(addr, my_noise_privkey).expect("Client channel connecting");
             let msg = "Test message".as_bytes();
             cli_channel.send_msg(&msg).expect("Sending test message");
             msg
@@ -327,13 +327,13 @@ mod tests {
         // client init part 2
         let server_pubkey = NoisePubKey(server_keypair.public[..].try_into().unwrap());
 
-        let addrs = "127.0.0.1:8001";
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
 
         // server thread
         let serv_thread = thread::spawn(move || {
             let my_noise_privkey = NoisePrivKey(server_keypair.private[..].try_into().unwrap());
             let their_noise_pubkey = client_pubkey;
-            let listener = TcpListener::bind(addrs.clone()).unwrap();
 
             let mut server_channel =
                 KKTransport::accept(listener, my_noise_privkey, their_noise_pubkey)
@@ -347,9 +347,8 @@ mod tests {
             let my_noise_privkey = NoisePrivKey(client_keypair.private[..].try_into().unwrap());
             let their_noise_pubkey = server_pubkey;
 
-            let mut cli_channel =
-                KKTransport::connect(addrs.clone(), my_noise_privkey, their_noise_pubkey)
-                    .expect("Client channel connecting");
+            let mut cli_channel = KKTransport::connect(addr, my_noise_privkey, their_noise_pubkey)
+                .expect("Client channel connecting");
             let msg = "Test message".as_bytes();
             cli_channel.send_msg(&msg).expect("Sending test message");
             msg
