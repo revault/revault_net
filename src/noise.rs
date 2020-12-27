@@ -357,13 +357,14 @@ pub fn encrypt_message(
     channel: &mut impl NoiseChannel,
     message: &[u8],
 ) -> Result<NoiseEncryptedMessage, Error> {
-    let mut output = vec![0u8; NOISE_MESSAGE_MAX_SIZE];
+    if message.len() > NOISE_PLAINTEXT_MAX_SIZE {
+        return Err(Error::Noise("Message is too large to encrypt".to_string()));
+    }
+    // FIXME: we *should not* need two MAC_SIZE !
+    let mut output = vec![0u8; message.len() + NOISE_MESSAGE_HEADER_SIZE + MAC_SIZE];
 
     // Prefix
     let message_len: usize = MAC_SIZE + message.len();
-    if message_len > NOISE_MESSAGE_MAX_SIZE - NOISE_MESSAGE_HEADER_SIZE {
-        return Err(Error::Noise("Message is too large to encrypt".to_string()));
-    }
     let length_prefix: [u8; LENGTH_PREFIX_SIZE] = message_len.to_be_bytes();
     channel
         .transport_state()
@@ -385,7 +386,14 @@ pub fn decrypt_message(
     channel: &mut impl NoiseChannel,
     message: &NoiseEncryptedMessage,
 ) -> Result<Vec<u8>, Error> {
-    let mut output = vec![0u8; NOISE_MESSAGE_MAX_SIZE];
+    // TODO: could be in NoiseEncryptedMessage's constructor?
+    if message.0.len() > NOISE_MESSAGE_MAX_SIZE {
+        return Err(Error::Noise("Message is too large to decrypt".to_string()));
+    }
+    if message.0.len() < NOISE_MESSAGE_HEADER_SIZE {
+        return Err(Error::Noise("Message is too small to decrypt".to_string()));
+    }
+    let mut output = vec![0u8; message.0.len() - NOISE_MESSAGE_HEADER_SIZE];
 
     // Decrypt the header to get the message size
     let mut header = [0u8; 8];
@@ -411,8 +419,8 @@ pub mod tests {
         noise::{
             decrypt_message, encrypt_message, KKChannel, KKHandshakeActOne, KKHandshakeActTwo,
             KKMessageActOne, KKMessageActTwo, KXChannel, KXHandshakeActOne, KXHandshakeActTwo,
-            KXMessageActOne, NoisePrivKey, NoisePubKey, KK_MSG_1_SIZE, KK_MSG_2_SIZE,
-            KX_MSG_1_SIZE, NOISE_MESSAGE_HEADER_SIZE, NOISE_MESSAGE_MAX_SIZE,
+            KXMessageActOne, NoiseEncryptedMessage, NoisePrivKey, NoisePubKey, KK_MSG_1_SIZE,
+            KK_MSG_2_SIZE, KX_MSG_1_SIZE, NOISE_MESSAGE_HEADER_SIZE, NOISE_MESSAGE_MAX_SIZE,
             NOISE_PLAINTEXT_MAX_SIZE,
         },
     };
@@ -547,9 +555,21 @@ pub mod tests {
         let (serv_act_2, _msg_2) = KXHandshakeActTwo::responder(serv_act_1).unwrap();
         let mut server_channel = KXChannel::from_handshake(serv_act_2).unwrap();
 
+        // Hit the limit
+        let msg = [0u8; NOISE_PLAINTEXT_MAX_SIZE];
+        encrypt_message(&mut server_channel, &msg).expect("Maximum allowed");
+
         // Fail if msg too large
         let msg = [0u8; NOISE_MESSAGE_MAX_SIZE - NOISE_MESSAGE_HEADER_SIZE + 1];
-        assert!(encrypt_message(&mut server_channel, &msg).is_err());
+        encrypt_message(&mut server_channel, &msg).expect_err("Limit exceeded");
+
+        // We can encrypt an empty message
+        let msg = b"";
+        encrypt_message(&mut server_channel, msg).expect("Empty message is fine to encrypt");
+
+        // We cannot decrypt an empty message
+        decrypt_message(&mut server_channel, &NoiseEncryptedMessage(msg.to_vec()))
+            .expect_err("Encrypted message with no header");
     }
 
     #[test]
