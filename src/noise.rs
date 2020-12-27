@@ -17,9 +17,8 @@ pub const NOISE_MESSAGE_MAX_SIZE: usize = 65535;
 pub const LENGTH_PREFIX_SIZE: usize = 8;
 /// Message header length plus its MAC
 pub const NOISE_MESSAGE_HEADER_SIZE: usize = MAC_SIZE + LENGTH_PREFIX_SIZE;
-/// Size of padded messages; limited by Noise Protocol Framework
-pub const NOISE_PADDED_MESSAGE_SIZE: usize =
-    NOISE_MESSAGE_MAX_SIZE - MAC_SIZE - NOISE_MESSAGE_HEADER_SIZE;
+/// Maximum size of a message before being encrypted; limited by Noise Protocol Framework
+pub const NOISE_PLAINTEXT_MAX_SIZE: usize = NOISE_MESSAGE_MAX_SIZE - NOISE_MESSAGE_HEADER_SIZE;
 /// e (no authentication tag appended)
 pub const KX_MSG_1_SIZE: usize = KEY_SIZE;
 /// e, ee, se, s, es
@@ -371,15 +370,10 @@ pub fn encrypt_message(
         .write_message(&length_prefix, &mut output[..NOISE_MESSAGE_HEADER_SIZE])
         .map_err(|e| Error::Noise(format!("Header encryption failed: {:?}", e)))?;
 
-    // Pad message
-    // FIXME: padding is huge
-    let mut message_body = [0u8; NOISE_PADDED_MESSAGE_SIZE];
-    message_body[..message.len()].copy_from_slice(message);
-
     // Encrypt message
     let ciphertext_len = channel
         .transport_state()
-        .write_message(&message_body[..], &mut output[NOISE_MESSAGE_HEADER_SIZE..])
+        .write_message(message, &mut output[NOISE_MESSAGE_HEADER_SIZE..])
         .map_err(|e| Error::Noise(format!("Message encryption failed: {:?}", e)))?;
     output.truncate(ciphertext_len + NOISE_MESSAGE_HEADER_SIZE);
 
@@ -419,7 +413,7 @@ pub mod tests {
             KKMessageActOne, KKMessageActTwo, KXChannel, KXHandshakeActOne, KXHandshakeActTwo,
             KXMessageActOne, NoisePrivKey, NoisePubKey, KK_MSG_1_SIZE, KK_MSG_2_SIZE,
             KX_MSG_1_SIZE, NOISE_MESSAGE_HEADER_SIZE, NOISE_MESSAGE_MAX_SIZE,
-            NOISE_PADDED_MESSAGE_SIZE,
+            NOISE_PLAINTEXT_MAX_SIZE,
         },
     };
     use snow::{params::NoiseParams, resolvers::SodiumResolver, Builder, Keypair};
@@ -532,7 +526,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_message_size_limit_and_padding() {
+    fn test_message_size_limit() {
         let hs_choice = HandshakeChoice::Kx;
         let noise_params = get_noise_params(&hs_choice).unwrap();
 
@@ -556,15 +550,6 @@ pub mod tests {
         // Fail if msg too large
         let msg = [0u8; NOISE_MESSAGE_MAX_SIZE - NOISE_MESSAGE_HEADER_SIZE + 1];
         assert!(encrypt_message(&mut server_channel, &msg).is_err());
-
-        // Test if padding hides message size
-        let msg_a = "".as_bytes();
-        let ciphertext_a = encrypt_message(&mut server_channel, &msg_a).unwrap();
-
-        let msg_b = [0u8; NOISE_PADDED_MESSAGE_SIZE];
-        let ciphertext_b = encrypt_message(&mut server_channel, &msg_b).unwrap();
-
-        assert_eq!(ciphertext_a.0.len(), ciphertext_b.0.len());
     }
 
     #[test]
