@@ -360,23 +360,16 @@ pub fn encrypt_message(
     if message.len() > NOISE_PLAINTEXT_MAX_SIZE {
         return Err(Error::Noise("Message is too large to encrypt".to_string()));
     }
-    // FIXME: we *should not* need two MAC_SIZE !
-    let mut output = vec![0u8; message.len() + NOISE_MESSAGE_HEADER_SIZE + MAC_SIZE];
+    let mut output = vec![0u8; NOISE_MESSAGE_HEADER_SIZE + message.len()];
 
-    // Prefix
+    let mut prefixed_message = vec![0u8; LENGTH_PREFIX_SIZE + message.len()];
     let message_len: usize = MAC_SIZE + message.len();
-    let length_prefix: [u8; LENGTH_PREFIX_SIZE] = message_len.to_be_bytes();
+    prefixed_message[..LENGTH_PREFIX_SIZE].copy_from_slice(&message_len.to_be_bytes());
+    prefixed_message[LENGTH_PREFIX_SIZE..].copy_from_slice(message);
     channel
         .transport_state()
-        .write_message(&length_prefix, &mut output[..NOISE_MESSAGE_HEADER_SIZE])
+        .write_message(&prefixed_message, &mut output)
         .map_err(|e| Error::Noise(format!("Header encryption failed: {:?}", e)))?;
-
-    // Encrypt message
-    let ciphertext_len = channel
-        .transport_state()
-        .write_message(message, &mut output[NOISE_MESSAGE_HEADER_SIZE..])
-        .map_err(|e| Error::Noise(format!("Message encryption failed: {:?}", e)))?;
-    output.truncate(ciphertext_len + NOISE_MESSAGE_HEADER_SIZE);
 
     Ok(NoiseEncryptedMessage(output))
 }
@@ -393,23 +386,18 @@ pub fn decrypt_message(
     if message.0.len() < NOISE_MESSAGE_HEADER_SIZE {
         return Err(Error::Noise("Message is too small to decrypt".to_string()));
     }
-    let mut output = vec![0u8; message.0.len() - NOISE_MESSAGE_HEADER_SIZE];
-
-    // Decrypt the header to get the message size
-    let mut header = [0u8; 8];
-    channel
-        .transport_state()
-        .read_message(&message.0[..NOISE_MESSAGE_HEADER_SIZE], &mut header)
-        .map_err(|e| Error::Noise(format!("Failed to decrypt message header: {:?}", e)))?;
-    let message_len = usize::from_be_bytes(header) - MAC_SIZE;
+    let mut output = vec![0u8; message.0.len()];
 
     channel
         .transport_state()
-        .read_message(&message.0[NOISE_MESSAGE_HEADER_SIZE..], &mut output)
+        .read_message(&message.0, &mut output)
         .map_err(|e| Error::Noise(format!("Failed to decrypt message: {:?}", e)))?;
-    output.truncate(message_len);
 
-    Ok(output)
+    // We read the length prefix and the MAC, but we don't care about any of both.
+    // TODO: bench this against truncating and reverse-then-pop-then-reverse
+    Ok(output
+        .drain(LENGTH_PREFIX_SIZE..output.len() - MAC_SIZE)
+        .collect())
 }
 
 #[cfg(test)]
