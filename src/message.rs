@@ -34,6 +34,7 @@ pub mod watchtower {
     use bitcoin::{
         hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
+        OutPoint,
     };
     use revault_tx::transactions::SpendTransaction;
     use serde::{Deserialize, Serialize};
@@ -48,8 +49,8 @@ pub mod watchtower {
         pub signatures: HashMap<PublicKey, Signature>,
         /// Revocation transaction id
         pub txid: Txid,
-        /// Vault transaction id
-        pub vault_txid: Txid,
+        /// Deposit outpoint of this vault
+        pub deposit_outpoint: OutPoint,
     }
 
     /// Message from the watchtower to wallet client to acknowledge that it has
@@ -271,7 +272,7 @@ pub mod cosigner {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, str::FromStr};
 
     use bitcoin::{
         hash_types::Txid,
@@ -279,6 +280,7 @@ mod tests {
             key::{PublicKey, SecretKey},
             Secp256k1, Signature,
         },
+        OutPoint,
     };
 
     use super::cosigner;
@@ -320,11 +322,14 @@ mod tests {
         let sig: Signature = get_dummy_sig();
         let signatures: HashMap<PublicKey, Signature> = [(pubkey, sig)].iter().cloned().collect();
         let txid: Txid = get_dummy_txid();
-        let vault_txid: Txid = get_dummy_txid();
+        let deposit_outpoint = OutPoint::from_str(
+            "3694ef9e8fcd78e9b8165a41e6f5e2b5f10bcd92c6d6e42b3325a850df56cd83:0",
+        )
+        .unwrap();
         let msg = watchtower::Sig {
             signatures,
             txid,
-            vault_txid,
+            deposit_outpoint,
         };
         let serialized_msg = serde_json::to_string(&msg).unwrap();
         let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
