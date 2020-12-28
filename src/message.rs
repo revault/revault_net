@@ -28,8 +28,8 @@ pub struct Opinion<'a> {
     pub pubkey: PublicKey,
 }
 
-///Watchtower
-mod watchtower {
+/// Watchtower
+pub mod watchtower {
     use super::{server::FinalizeSpend, Opinion};
     use bitcoin::{
         hash_types::Txid,
@@ -124,18 +124,18 @@ mod watchtower {
     }
 }
 
-///Synchronisation Server
-mod server {
+/// Synchronisation Server
+pub mod server {
     use super::Opinion;
-    use crate::error::Error;
     use bitcoin::{
         hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
     };
     use revault_tx::transactions::SpendTransaction;
     use serde::{Deserialize, Serialize};
-    use std::collections::HashMap;
+    use std::{collections::HashMap, default::Default};
 
+    /// Share the signature for an usual transaction
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
     pub struct EncryptedSignature {
         /// Curve25519 public key used to encrypt the signature
@@ -172,6 +172,8 @@ mod server {
             }
         }
 
+        /// If an encrypted signature is present then no clear signatures, says
+        /// https://github.com/re-vault/practical-revault/blob/master/messages.md#sig-1
         pub fn from_encrypted_signature(
             pubkey: PublicKey,
             encrypted_signature: EncryptedSignature,
@@ -185,14 +187,6 @@ mod server {
                 encrypted_signature,
                 id,
             }
-        }
-
-        pub fn signature(&self) -> &Option<Signature> {
-            return &self.signature;
-        }
-
-        pub fn encrypted_signature(&self) -> &Option<EncryptedSignature> {
-            return &self.encrypted_signature;
         }
     }
 
@@ -225,6 +219,8 @@ mod server {
             }
         }
 
+        /// If an encrypted signature is present then no clear signatures, says
+        /// https://github.com/re-vault/practical-revault/blob/master/messages.md#sig-1
         pub fn from_encrypted_signatures(
             encrypted_signatures: HashMap<PublicKey, Vec<EncryptedSignature>>,
         ) -> Self {
@@ -233,20 +229,14 @@ mod server {
                 encrypted_signatures: Some(encrypted_signatures),
             }
         }
+    }
 
-        pub fn empty() -> Self {
+    impl Default for Sigs {
+        fn default() -> Self {
             Sigs {
                 signatures: None,
                 encrypted_signatures: None,
             }
-        }
-
-        pub fn signatures(&self) -> &Option<HashMap<PublicKey, Signature>> {
-            return &self.signatures;
-        }
-
-        pub fn encrypted_signatures(&self) -> &Option<HashMap<PublicKey, Vec<EncryptedSignature>>> {
-            return &self.encrypted_signatures;
         }
     }
 
@@ -302,7 +292,7 @@ mod server {
 }
 
 ///Cosigning Server
-mod cosigner {
+pub mod cosigner {
     use revault_tx::transactions::SpendTransaction;
     use serde::{Deserialize, Serialize};
 
