@@ -9,4 +9,6 @@ pub mod message;
 
 pub mod noise;
 
+pub mod transport;
+
 pub mod error;

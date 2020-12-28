@@ -9,6 +9,8 @@ pub enum Error {
     Message(String),
     /// Error while using snow API
     Noise(String),
+    /// Transport error
+    Transport(String),
 }
 
 impl fmt::Display for Error {
@@ -16,6 +18,7 @@ impl fmt::Display for Error {
         match *self {
             Error::Message(ref e) => write!(f, "Message Error: {}", e),
             Error::Noise(ref e) => write!(f, "Noise Error: {}", e),
+            Error::Transport(ref e) => write!(f, "Transport Error: {}", e),
         }
     }
 }

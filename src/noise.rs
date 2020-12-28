@@ -426,12 +426,12 @@ pub mod tests {
     use std::convert::TryInto;
 
     #[derive(Debug, Clone)]
-    enum HandshakeChoice {
+    pub enum HandshakeChoice {
         Kx,
         Kk,
     }
 
-    fn get_noise_params(hs_choice: &HandshakeChoice) -> Result<NoiseParams, Error> {
+    pub fn get_noise_params(hs_choice: &HandshakeChoice) -> Result<NoiseParams, Error> {
         let noise_params: NoiseParams = match hs_choice {
             HandshakeChoice::Kk => "Noise_KK_25519_ChaChaPoly_SHA256"
                 .parse()
@@ -445,7 +445,7 @@ pub mod tests {
 
     /// Revault must specify the SodiumResolver to use sodiumoxide as the cryptography provider
     /// when generating a static key pair for secure communication.
-    fn generate_keypair(noise_params: NoiseParams) -> Keypair {
+    pub fn generate_keypair(noise_params: NoiseParams) -> Keypair {
         Builder::with_resolver(noise_params, Box::new(SodiumResolver::default()))
             .generate_keypair()
             .unwrap()
