@@ -58,7 +58,6 @@ impl KXHandshakeActOne {
             "Noise_KX_25519_ChaChaPoly_SHA256"
                 .parse()
                 .expect("Valid params"),
-            // FIXME: should probably be part of a context
             Box::new(SodiumResolver::default()),
         );
         let mut state = builder
@@ -97,7 +96,6 @@ impl KXHandshakeActOne {
             "Noise_KX_25519_ChaChaPoly_SHA256"
                 .parse()
                 .expect("Valid params"),
-            // FIXME: should probably be part of a context
             Box::new(SodiumResolver::default()),
         );
         let mut state = builder
@@ -212,7 +210,6 @@ impl KKHandshakeActOne {
             "Noise_KK_25519_ChaChaPoly_SHA256"
                 .parse()
                 .expect("Valid params"),
-            // FIXME: should probably be part of a context
             Box::new(SodiumResolver::default()),
         );
         let mut state = builder
@@ -246,7 +243,6 @@ impl KKHandshakeActOne {
             "Noise_KK_25519_ChaChaPoly_SHA256"
                 .parse()
                 .expect("Valid params"),
-            // FIXME: should probably be part of a context
             Box::new(SodiumResolver::default()),
         );
         let mut state = builder
