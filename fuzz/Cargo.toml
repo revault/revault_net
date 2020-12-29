@@ -24,3 +24,9 @@ name = "encrypt_roundtrip"
 path = "fuzz_targets/encrypt_roundtrip.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "transport"
+path = "fuzz_targets/transport.rs"
+test = false
+doc = false

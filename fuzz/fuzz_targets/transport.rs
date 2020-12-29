@@ -1,0 +1,61 @@
+#![no_main]
+use libfuzzer_sys::fuzz_target;
+use revault_net::{noise::*, transport::*};
+use std::{net::TcpListener, thread};
+
+const INIT_PRIVKEY: NoisePrivKey = NoisePrivKey([
+    16, 85, 69, 127, 155, 247, 36, 200, 184, 156, 230, 255, 16, 125, 113, 4, 95, 78, 76, 188, 58,
+    21, 55, 146, 195, 160, 199, 82, 41, 109, 199, 81,
+]);
+const INIT_PUBKEY: NoisePubKey = NoisePubKey([
+    10, 12, 215, 103, 252, 231, 156, 109, 147, 53, 1, 147, 42, 240, 233, 242, 164, 67, 0, 81, 86,
+    180, 233, 168, 75, 29, 216, 242, 15, 186, 225, 102,
+]);
+
+const RESP_PRIVKEY: NoisePrivKey = NoisePrivKey([
+    96, 240, 118, 161, 68, 25, 19, 15, 12, 238, 118, 69, 95, 52, 3, 130, 2, 107, 15, 25, 135, 234,
+    72, 36, 67, 124, 36, 228, 203, 101, 122, 110,
+]);
+const RESP_PUBKEY: NoisePubKey = NoisePubKey([
+    19, 103, 106, 15, 169, 190, 254, 15, 187, 105, 61, 163, 152, 251, 238, 139, 253, 160, 165, 89,
+    108, 67, 194, 161, 42, 72, 15, 38, 109, 193, 45, 125,
+]);
+
+fn kx_client_server(data: &[u8]) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let msg_sent = data.to_vec();
+
+    thread::spawn(move || {
+        let mut cli_channel =
+            KXTransport::connect(addr, INIT_PRIVKEY).expect("Client channel connecting");
+        cli_channel.write(&msg_sent).expect("Sending test message");
+    });
+
+    let mut serv_transport = KXTransport::accept(listener, RESP_PRIVKEY, INIT_PUBKEY).unwrap();
+    if let Ok(msg) = serv_transport.read() {
+        assert_eq!(&msg, data);
+    }
+}
+
+fn kk_client_server(data: &[u8]) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let msg_sent = data.to_vec();
+
+    thread::spawn(move || {
+        let mut cli_channel = KKTransport::connect(addr, INIT_PRIVKEY, RESP_PUBKEY)
+            .expect("Client channel connecting");
+        cli_channel.write(&msg_sent).expect("Sending test message");
+    });
+
+    let mut serv_transport = KKTransport::accept(listener, RESP_PRIVKEY, INIT_PUBKEY).unwrap();
+    if let Ok(msg) = serv_transport.read() {
+        assert_eq!(&msg, data);
+    }
+}
+
+fuzz_target!(|data: &[u8]| {
+    kx_client_server(data);
+    kk_client_server(data);
+});
