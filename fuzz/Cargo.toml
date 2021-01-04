@@ -1,0 +1,32 @@
+
+[package]
+name = "revault_net-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.3"
+
+[dependencies.revault_net]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "encrypt_roundtrip"
+path = "fuzz_targets/encrypt_roundtrip.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "transport"
+path = "fuzz_targets/transport.rs"
+test = false
+doc = false
