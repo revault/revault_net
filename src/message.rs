@@ -6,7 +6,7 @@
 //! Please find the specification at
 //! https://github.com/re-vault/practical-revault/blob/master/messages.md
 
-use bitcoin::{
+use revault_tx::bitcoin::{
     hash_types::Txid,
     secp256k1::{key::PublicKey, Signature},
 };
@@ -31,7 +31,7 @@ pub struct Opinion<'a> {
 /// Watchtower
 pub mod watchtower {
     use super::{server::FinalizeSpend, Opinion};
-    use bitcoin::{
+    use revault_tx::bitcoin::{
         hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
         OutPoint,
@@ -128,7 +128,7 @@ pub mod watchtower {
 /// Synchronisation Server
 pub mod server {
     use super::Opinion;
-    use bitcoin::{
+    use revault_tx::bitcoin::{
         hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
     };
@@ -274,7 +274,7 @@ pub mod cosigner {
 mod tests {
     use std::{collections::HashMap, str::FromStr};
 
-    use bitcoin::{
+    use revault_tx::bitcoin::{
         hash_types::Txid,
         secp256k1::{
             key::{PublicKey, SecretKey},
@@ -307,7 +307,7 @@ mod tests {
     }
 
     fn get_dummy_txid() -> Txid {
-        bitcoin::Txid::default()
+        Txid::default()
     }
 
     fn get_dummy_spend_tx() -> SpendTransaction {
