@@ -28,8 +28,8 @@ pub struct Opinion<'a> {
     pub pubkey: PublicKey,
 }
 
-///Watchtower
-mod watchtower {
+/// Watchtower
+pub mod watchtower {
     use super::{server::FinalizeSpend, Opinion};
     use bitcoin::{
         hash_types::Txid,
@@ -124,10 +124,9 @@ mod watchtower {
     }
 }
 
-///Synchronisation Server
-mod server {
+/// Synchronisation Server
+pub mod server {
     use super::Opinion;
-    use crate::error::Error;
     use bitcoin::{
         hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
@@ -136,6 +135,19 @@ mod server {
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
+    /// Message from a wallet client to sync server to share (at any time) the
+    /// signature for an usual transaction with all participants.
+    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+    pub struct Sig {
+        /// Secp256k1 public key used to sign the transaction (hex)
+        pub pubkey: PublicKey,
+        /// Bitcoin ECDSA signature as hex
+        pub signature: Signature,
+        /// Txid of the transaction the signature applies to
+        pub id: Txid,
+    }
+
+    /// An encrypted signature of a transaction
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
     pub struct EncryptedSignature {
         /// Curve25519 public key used to encrypt the signature
@@ -144,56 +156,17 @@ mod server {
         pub encrypted_signature: String,
     }
 
-    /// Message from a wallet client to sync server to share (at any time) the
-    /// signature for a transaction with all participants.
+    /// 'Sig' message from a wallet client to sync server to share (at any time) the
+    /// signature for an emergency transaction with all participants.
+    /// Special-cased as the Emergency transaction signature is encrypted.
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub struct Sig {
+    pub struct EmergencySig {
         /// Secp256k1 public key used to sign the transaction (hex)
         pub pubkey: PublicKey,
         /// Bitcoin ECDSA signature as hex (for usual transactions)
-        signature: Option<Signature>,
-        /// An encrypted bitcoin ECDSA signature (for emergency transactions)
-        encrypted_signature: Option<EncryptedSignature>,
+        pub encrypted_signature: EncryptedSignature,
         /// Txid of the transaction the signature applies to
         pub id: Txid,
-    }
-
-    impl Sig {
-        /// Safe constructors for Sig message to adhere to the specification at
-        /// https://github.com/re-vault/practical-revault/blob/master/messages.md#sig-1
-        pub fn from_signature(pubkey: PublicKey, signature: Signature, id: Txid) -> Self {
-            let signature = Some(signature);
-            let encrypted_signature = None;
-            Sig {
-                pubkey,
-                signature,
-                encrypted_signature,
-                id,
-            }
-        }
-
-        pub fn from_encrypted_signature(
-            pubkey: PublicKey,
-            encrypted_signature: EncryptedSignature,
-            id: Txid,
-        ) -> Self {
-            let signature = None;
-            let encrypted_signature = Some(encrypted_signature);
-            Sig {
-                pubkey,
-                signature,
-                encrypted_signature,
-                id,
-            }
-        }
-
-        pub fn signature(&self) -> &Option<Signature> {
-            return &self.signature;
-        }
-
-        pub fn encrypted_signature(&self) -> &Option<EncryptedSignature> {
-            return &self.encrypted_signature;
-        }
     }
 
     /// Sent by a wallet to retrieve all signatures for a specific transaction
@@ -205,49 +178,22 @@ mod server {
 
     /// Message response to get_sigs from sync server to wallet client with a
     /// (potentially incomplete) mapping of each public key to each signature
-    /// required to verify this transaction
+    /// required to verify this **usual** transaction
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
     pub struct Sigs {
-        /// Mapping of public keys to ECDSA signatures for the requested transaction.
-        /// Signatures are plaintext for usual transactions, and are encrypted for
-        /// emergency transactions.
-        signatures: Option<HashMap<PublicKey, Signature>>,
-        encrypted_signatures: Option<HashMap<PublicKey, Vec<EncryptedSignature>>>,
+        /// Mapping of public keys to ECDSA signatures for the requested usual
+        /// transaction.
+        pub signatures: HashMap<PublicKey, Signature>,
     }
 
-    impl Sigs {
-        /// Safe constructors for Sigs message to adhere to the specification at
-        /// https://github.com/re-vault/practical-revault/blob/master/messages.md#get_sigs
-        pub fn from_signatures(signatures: HashMap<PublicKey, Signature>) -> Self {
-            Sigs {
-                signatures: Some(signatures),
-                encrypted_signatures: None,
-            }
-        }
-
-        pub fn from_encrypted_signatures(
-            encrypted_signatures: HashMap<PublicKey, Vec<EncryptedSignature>>,
-        ) -> Self {
-            Sigs {
-                signatures: None,
-                encrypted_signatures: Some(encrypted_signatures),
-            }
-        }
-
-        pub fn empty() -> Self {
-            Sigs {
-                signatures: None,
-                encrypted_signatures: None,
-            }
-        }
-
-        pub fn signatures(&self) -> &Option<HashMap<PublicKey, Signature>> {
-            return &self.signatures;
-        }
-
-        pub fn encrypted_signatures(&self) -> &Option<HashMap<PublicKey, Vec<EncryptedSignature>>> {
-            return &self.encrypted_signatures;
-        }
+    /// Message response to get_sigs from sync server to wallet client with a
+    /// (potentially incomplete) mapping of each public key to each signature
+    /// required to verify this **emergency** transaction
+    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+    pub struct EmergencySigs {
+        /// Mapping of public keys to encrypted signatures for the requested emergency
+        /// transaction.
+        pub encrypted_signatures: HashMap<PublicKey, Vec<EncryptedSignature>>,
     }
 
     /// Message from a manager to synchronization server to signal their willingness to
@@ -302,7 +248,7 @@ mod server {
 }
 
 ///Cosigning Server
-mod cosigner {
+pub mod cosigner {
     use revault_tx::transactions::SpendTransaction;
     use serde::{Deserialize, Serialize};
 
@@ -488,7 +434,11 @@ mod tests {
         let id = get_dummy_txid();
 
         // Cleartext signature
-        let msg1 = server::Sig::from_signature(pubkey, sig.clone(), id);
+        let msg1 = server::Sig {
+            pubkey,
+            signature: sig.clone(),
+            id,
+        };
         let serialized_msg = serde_json::to_string(&msg1).unwrap();
         let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
         assert_eq!(msg1, deserialized_msg);
@@ -498,7 +448,11 @@ mod tests {
             pubkey: Vec::new(),
             encrypted_signature: String::new(),
         };
-        let msg2 = server::Sig::from_encrypted_signature(pubkey, encrypted_signature.clone(), id);
+        let msg2 = server::EmergencySig {
+            pubkey,
+            encrypted_signature,
+            id,
+        };
         let serialized_msg = serde_json::to_string(&msg2).unwrap();
         let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
         assert_eq!(msg2, deserialized_msg);
@@ -521,7 +475,7 @@ mod tests {
         let signatures: HashMap<PublicKey, Signature> = [(pubkey, sig)].iter().cloned().collect();
 
         // Cleartext signatures
-        let msg1 = server::Sigs::from_signatures(signatures);
+        let msg1 = server::Sigs { signatures };
         let serialized_msg = serde_json::to_string(&msg1).unwrap();
         let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
         assert_eq!(msg1, deserialized_msg);
@@ -536,13 +490,16 @@ mod tests {
                 .iter()
                 .cloned()
                 .collect();
-        let msg2 = server::Sigs::from_encrypted_signatures(encrypted_signatures);
+        let msg2 = server::EmergencySigs {
+            encrypted_signatures,
+        };
         let serialized_msg = serde_json::to_string(&msg2).unwrap();
         let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
         assert_eq!(msg2, deserialized_msg);
 
         // No signatures
-        let msg3 = server::Sigs::empty();
+        let signatures = HashMap::new();
+        let msg3 = server::Sigs { signatures };
         let serialized_msg = serde_json::to_string(&msg3).unwrap();
         let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
         assert_eq!(msg3, deserialized_msg);

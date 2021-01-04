@@ -25,7 +25,7 @@ pub struct KXTransport {
 }
 
 impl KXTransport {
-    /// Perform an outgoing connection to the given address, and enact Noise KK handshake
+    /// Perform an outgoing connection to the given address, and enact Noise KX handshake
     /// with the given private key.
     pub fn connect<A: ToSocketAddrs>(
         addr: A,
@@ -123,7 +123,6 @@ impl KXTransport {
                     // That's actually bad
                     _ => return Err(Error::Transport(format!("Reading from stream: '{}'", e))),
                 },
-                _ => continue,
             };
         }
         encrypted_msg.truncate(bytes_read);
@@ -241,7 +240,6 @@ impl KKTransport {
                     // That's actually bad
                     _ => return Err(Error::Transport(format!("Reading from stream: '{}'", e))),
                 },
-                _ => continue,
             };
         }
         encrypted_msg.truncate(bytes_read);

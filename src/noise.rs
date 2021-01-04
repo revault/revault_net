@@ -20,13 +20,15 @@ pub const NOISE_MESSAGE_HEADER_SIZE: usize = MAC_SIZE + LENGTH_PREFIX_SIZE;
 /// Maximum size of a message before being encrypted; limited by Noise Protocol Framework
 pub const NOISE_PLAINTEXT_MAX_SIZE: usize = NOISE_MESSAGE_MAX_SIZE - NOISE_MESSAGE_HEADER_SIZE;
 /// e (no authentication tag appended)
-pub const KX_MSG_1_SIZE: usize = KEY_SIZE;
+pub const KX_MSG_1_SIZE: usize = KEY_SIZE + HANDSHAKE_MESSAGE.len();
 /// e, ee, se, s, es
 pub const KX_MSG_2_SIZE: usize = 2 * KEY_SIZE + 2 * MAC_SIZE;
 /// e, es, ss
-pub const KK_MSG_1_SIZE: usize = KEY_SIZE + MAC_SIZE;
+pub const KK_MSG_1_SIZE: usize = KEY_SIZE + HANDSHAKE_MESSAGE.len() + MAC_SIZE;
 /// e, ee, se
 pub const KK_MSG_2_SIZE: usize = KEY_SIZE + MAC_SIZE;
+/// Sent for versioning and identification during handshake
+pub const HANDSHAKE_MESSAGE: &[u8] = b"practical_revault_0";
 
 /// A static Noise public key
 #[derive(Debug)]
@@ -56,7 +58,6 @@ impl KXHandshakeActOne {
             "Noise_KX_25519_ChaChaPoly_SHA256"
                 .parse()
                 .expect("Valid params"),
-            // FIXME: should probably be part of a context
             Box::new(SodiumResolver::default()),
         );
         let mut state = builder
@@ -65,11 +66,11 @@ impl KXHandshakeActOne {
             .map_err(|e| Error::Noise(format!("Failed to build state for initiator: {:?}", e)))?;
 
         // Write the first message. We make the buffer large enough to contain the tag, as Snow
-        // would error otherwise, even if it does not actually use it (no PSK).
+        // would error otherwise, even if it does not actually use it (no PSK, therefore no inner
+        // key, therefore no possible AD).
         let mut buf_with_tag = [0u8; KX_MSG_1_SIZE + MAC_SIZE];
         state
-            // FIXME: should we write something like b"revault_0" ?
-            .write_message(&[], &mut buf_with_tag)
+            .write_message(HANDSHAKE_MESSAGE, &mut buf_with_tag)
             .map_err(|e| {
                 Error::Noise(format!(
                     "Failed to write first message for initiator: {:?}",
@@ -95,7 +96,6 @@ impl KXHandshakeActOne {
             "Noise_KX_25519_ChaChaPoly_SHA256"
                 .parse()
                 .expect("Valid params"),
-            // FIXME: should probably be part of a context
             Box::new(SodiumResolver::default()),
         );
         let mut state = builder
@@ -104,14 +104,21 @@ impl KXHandshakeActOne {
             .build_responder()
             .map_err(|e| Error::Noise(format!("Failed to build state for responder: {:?}", e)))?;
 
-        // In handshake mode we don't actually care about the message
-        let mut _m = [0u8; KX_MSG_1_SIZE];
-        state.read_message(&message.0, &mut _m).map_err(|e| {
+        // Check handshake version message
+        let mut msg = [0u8; KX_MSG_1_SIZE];
+        state.read_message(&message.0, &mut msg).map_err(|e| {
             Error::Noise(format!(
                 "Failed to read first message for responder: {:?}",
                 e
             ))
         })?;
+        if &msg[..HANDSHAKE_MESSAGE.len()] != HANDSHAKE_MESSAGE {
+            return Err(Error::Noise(format!(
+                "Wrong handshake message. Expected '{:x?}' got '{:x?}'.",
+                HANDSHAKE_MESSAGE,
+                &msg[..HANDSHAKE_MESSAGE.len()]
+            )));
+        }
 
         Ok(KXHandshakeActOne { state })
     }
@@ -203,7 +210,6 @@ impl KKHandshakeActOne {
             "Noise_KK_25519_ChaChaPoly_SHA256"
                 .parse()
                 .expect("Valid params"),
-            // FIXME: should probably be part of a context
             Box::new(SodiumResolver::default()),
         );
         let mut state = builder
@@ -215,8 +221,7 @@ impl KKHandshakeActOne {
         // Write the first message
         let mut msg = [0u8; KK_MSG_1_SIZE];
         state
-            // FIXME: should we write something like b"revault_0" ?
-            .write_message(&[], &mut msg)
+            .write_message(HANDSHAKE_MESSAGE, &mut msg)
             .map_err(|e| {
                 Error::Noise(format!(
                     "Failed to write first message for initiator: {:?}",
@@ -238,7 +243,6 @@ impl KKHandshakeActOne {
             "Noise_KK_25519_ChaChaPoly_SHA256"
                 .parse()
                 .expect("Valid params"),
-            // FIXME: should probably be part of a context
             Box::new(SodiumResolver::default()),
         );
         let mut state = builder
@@ -248,13 +252,20 @@ impl KKHandshakeActOne {
             .map_err(|e| Error::Noise(format!("Failed to build state for responder: {:?}", e)))?;
 
         // In handshake mode we don't actually care about the message
-        let mut _m = [0u8; KK_MSG_1_SIZE];
-        state.read_message(&message.0, &mut _m).map_err(|e| {
+        let mut msg = [0u8; KK_MSG_1_SIZE];
+        state.read_message(&message.0, &mut msg).map_err(|e| {
             Error::Noise(format!(
                 "Failed to read first message for responder: {:?}",
                 e
             ))
         })?;
+        if &msg[..HANDSHAKE_MESSAGE.len()] != HANDSHAKE_MESSAGE {
+            return Err(Error::Noise(format!(
+                "Wrong handshake message. Expected '{:x?}' got '{:x?}'.",
+                HANDSHAKE_MESSAGE,
+                &msg[..HANDSHAKE_MESSAGE.len()]
+            )));
+        }
 
         Ok(KKHandshakeActOne { state })
     }
@@ -407,9 +418,9 @@ pub mod tests {
         noise::{
             decrypt_message, encrypt_message, KKChannel, KKHandshakeActOne, KKHandshakeActTwo,
             KKMessageActOne, KKMessageActTwo, KXChannel, KXHandshakeActOne, KXHandshakeActTwo,
-            KXMessageActOne, NoiseEncryptedMessage, NoisePrivKey, NoisePubKey, KK_MSG_1_SIZE,
-            KK_MSG_2_SIZE, KX_MSG_1_SIZE, NOISE_MESSAGE_HEADER_SIZE, NOISE_MESSAGE_MAX_SIZE,
-            NOISE_PLAINTEXT_MAX_SIZE,
+            KXMessageActOne, KXMessageActTwo, NoiseEncryptedMessage, NoisePrivKey, NoisePubKey,
+            KK_MSG_1_SIZE, KK_MSG_2_SIZE, KX_MSG_1_SIZE, KX_MSG_2_SIZE, NOISE_MESSAGE_HEADER_SIZE,
+            NOISE_MESSAGE_MAX_SIZE, NOISE_PLAINTEXT_MAX_SIZE,
         },
     };
     use snow::{params::NoiseParams, resolvers::SodiumResolver, Builder, Keypair};
@@ -581,31 +592,22 @@ pub mod tests {
 
         let bad_msg = KKMessageActOne([1u8; KK_MSG_1_SIZE]);
         KKHandshakeActOne::responder(&responder_privkey, &initiator_pubkey, &bad_msg)
-            .expect_err("This one is invalid.");
+            .expect_err("This one is invalid as bad_msg cannot be decrypted.");
 
         let bad_msg = KKMessageActTwo([1u8; KK_MSG_2_SIZE]);
         KKHandshakeActTwo::initiator(cli_act_1, &bad_msg).expect_err("So is this one.");
 
-        // KX handshake fails on client side if messages are badly formed,
-        // but succeeds on server side. However, there's no chance for
-        // client to decrypt messages encrypted by server.
+        // KX handshake fails on client side if handshake is invalid.
         let (cli_act_1, _) = KXHandshakeActOne::initiator(&initiator_privkey).unwrap();
 
-        // Responder doesn't fail act 1 on a bad message..
         let bad_msg = KXMessageActOne([std::u8::MAX; KX_MSG_1_SIZE]);
-        let serv_act_1 =
-            KXHandshakeActOne::responder(&responder_privkey, &initiator_pubkey, &bad_msg).unwrap();
-        // Neither does it fail act 2 !!!
-        let (serv_act_2, msg_2) = KXHandshakeActTwo::responder(serv_act_1).unwrap();
-        // Responder can construct a KXChannel from a bad message..
-        let mut server_channel = KXChannel::from_handshake(serv_act_2).unwrap();
-        let plaintext = "TEST".as_bytes();
-        // Responder can successfully encrypt messages..
-        let ciphertext = encrypt_message(&mut server_channel, &plaintext);
-        assert!(ciphertext.is_ok());
+        KXHandshakeActOne::responder(&responder_privkey, &initiator_pubkey, &bad_msg)
+            .expect_err("Invalid handshake in act one");
 
-        // Client fails to read msg_2 as it is derived from bad_msg
-        KXHandshakeActTwo::initiator(cli_act_1, &msg_2).unwrap_err();
-        // Client can't decrypt messages from responder since the KXChannel can't be established
+        let bad_msg = KXMessageActTwo([std::u8::MAX; KX_MSG_2_SIZE]);
+        KXHandshakeActTwo::initiator(cli_act_1, &bad_msg).expect_err("Bad handshake state");
+
+        let (cli_act_1, _) = KXHandshakeActOne::initiator(&initiator_privkey).unwrap();
+        KXHandshakeActTwo::responder(cli_act_1).expect_err("Bad handshake state");
     }
 }
