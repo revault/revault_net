@@ -6,37 +6,13 @@
 //! Please find the specification at
 //! https://github.com/re-vault/practical-revault/blob/master/messages.md
 
-use revault_tx::bitcoin::{
-    hash_types::Txid,
-    secp256k1::{key::PublicKey, Signature},
-};
-use serde::{Deserialize, Serialize};
-
-/// Opinion struct to be used in watchtower::SpendOpinion and server::SpendOpinions
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct Opinion<'a> {
-    /// Spend transaction id
-    pub id: Txid,
-    /// Acceptance of spend transaction
-    pub accepted: bool,
-    /// Reason field is set if accept is false, otherwise it is ignored
-    pub reason: Option<&'a str>,
-    /// ECDSA (secp256k1) signature of this opinion as utf-8 encoded json
-    /// with no space and sig:\"\"
-    pub sig: Signature,
-    /// secp256k1 public key used to produce the above signature
-    pub pubkey: PublicKey,
-}
-
 /// Watchtower
 pub mod watchtower {
-    use super::{server::FinalizeSpend, Opinion};
     use revault_tx::bitcoin::{
         hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
         OutPoint,
     };
-    use revault_tx::transactions::SpendTransaction;
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
@@ -64,75 +40,33 @@ pub mod watchtower {
         pub txid: Txid,
     }
 
-    /// Message from watchtower to sync server to learn about spending attempts
+    /// Sent by a watchtower to the synchronisation server after an unvault
+    /// event to learn about the spend transaction.
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct GetSpendRequests {}
-
-    /// Request struct to be used in spend_requests message
-    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub struct Request {
-        /// Unsigned signed spend transaction (PSBT format)
-        pub unsigned_spend_tx: SpendTransaction,
+    pub struct GetSpendTx {
+        /// Outpoint designing the deposit utxo that created the vault this
+        /// spend tx is spending.
+        pub deposit_outpoint: OutPoint,
     }
 
-    /// Message response from watchtower to sync server for get_spend_requests
+    /// The response to the [GetSpendTx] request.
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct SpendRequests {
-        /// Arbitrarily size array of objects detailing spend requests
-        pub requests: Vec<Request>,
-    }
-
-    /// Message from a watchtower to the synchronisation server to signal its
-    /// acceptance or refusal of a specific spend.
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct SpendOpinion<'a> {
-        /// Watchtower's opinion
-        #[serde(borrow)]
-        pub opinion: Opinion<'a>,
-    }
-
-    /// Regularly sent by a watchtower to the synchronisation server after
-    /// having received a spend_request to learn about finalized spending attempts.
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct GetFinalizedSpends {}
-
-    /// The response to a GetFinalizedSpends.
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct FinalizedSpends {
-        /// Collection of fully signed spend transactions (PSBT format)
-        pub requests: Vec<SpendTransaction>,
-    }
-
-    impl FinalizedSpends {
-        /// Convenience function for sync server to construct FinalizedSpends
-        /// from a collection of FinalizeSpend messages
-        pub fn new(finalized_spends: Vec<FinalizeSpend>) -> Self {
-            let mut requests = Vec::new();
-            for req in finalized_spends {
-                requests.push(req.signed_spend_tx);
-            }
-            FinalizedSpends { requests }
-        }
-    }
-
-    /// Sent by a watchtower to the synchronisation server to signal its
-    /// acknowledgement or refusal of a fully-signed spend transaction.
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct ValidateSpend<'a> {
-        /// Watchtower's opinion for the spend transaction
-        #[serde(borrow)]
-        pub opinion: Opinion<'a>,
+    pub struct SpendTx {
+        /// The Bitcoin-serialized Spend transaction. The sync server isn't
+        /// creating it so there is no point to create it from_spend_tx().
+        pub transaction: Vec<u8>,
     }
 }
 
 /// Synchronisation Server
 pub mod server {
-    use super::Opinion;
-    use revault_tx::bitcoin::{
-        hash_types::Txid,
-        secp256k1::{key::PublicKey, Signature},
+    use revault_tx::{
+        bitcoin::{
+            hash_types::Txid,
+            secp256k1::{key::PublicKey, Signature},
+        },
+        transactions::{RevaultTransaction, SpendTransaction},
     };
-    use revault_tx::transactions::SpendTransaction;
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
@@ -197,54 +131,22 @@ pub mod server {
         pub encrypted_signatures: HashMap<PublicKey, Vec<EncryptedSignature>>,
     }
 
-    /// Message from a manager to synchronization server to signal their willingness to
-    /// spend a vault.
+    /// Sent by a manager to advertise the spend transaction that will eventually
+    /// be used for a specific unvault.
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct RequestSpend {
-        /// Unsigned spend transaction (PSBT format)
-        pub unsigned_spend_tx: SpendTransaction,
-    }
-
-    /// Message from a manager to poll sync server for watchtowers' agreement
-    /// regarding the spend attempt identified by id
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct GetSpendOpinions {
-        /// Spend transaction txid
-        pub id: Txid,
-    }
-
-    /// Response to a manager from the sync server of watchtowers' agreement
-    /// regarding the spend attempt identified by id
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct SpendOpinions<'a> {
-        /// Collection of available opinions from watchtowers
-        #[serde(borrow)]
-        pub opinions: Vec<Opinion<'a>>,
-    }
-
-    /// Sent by a manager to finalize their spending attempt by presenting the
-    /// fully-signed spend transaction to the watchtowers
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct FinalizeSpend {
+    pub struct SetSpendTx {
         /// Fully signed spend transaction
-        pub signed_spend_tx: SpendTransaction,
+        transaction: Vec<u8>,
     }
 
-    /// Sent by a manager when polling for watchtowers acknowledgement of the
-    /// fully signed transaction spending the vault identified by id
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct GetSpendValidations {
-        /// Spend transaction txid
-        pub id: Txid,
-    }
-
-    /// Sent by a watchtower to the synchronisation server to signal its
-    /// acknowledgement or refusal of a fully-signed spend transaction.
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct SpendValidations<'a> {
-        ///Collection of Watchtowers' signed opinions for the spend transaction
-        #[serde(borrow)]
-        pub opinions: Vec<Opinion<'a>>,
+    impl SetSpendTx {
+        /// Create a SetSpendTx message out of a SpendTransaction. The SpendTransaction MUST
+        /// have been finalized beforehand!
+        pub fn from_spend_tx(tx: SpendTransaction) -> Result<Self, revault_tx::Error> {
+            // FIXME: implement into_bitcoin_serialized upstream!
+            tx.as_bitcoin_serialized()
+                .map(|transaction| Self { transaction })
+        }
     }
 }
 
@@ -274,20 +176,21 @@ pub mod cosigner {
 mod tests {
     use std::{collections::HashMap, str::FromStr};
 
-    use revault_tx::bitcoin::{
-        hash_types::Txid,
-        secp256k1::{
-            key::{PublicKey, SecretKey},
-            Secp256k1, Signature,
+    use revault_tx::{
+        bitcoin::{
+            hash_types::Txid,
+            secp256k1::{
+                key::{PublicKey, SecretKey},
+                Secp256k1, Signature,
+            },
+            OutPoint,
         },
-        OutPoint,
+        transactions::{RevaultTransaction, SpendTransaction},
     };
 
     use super::cosigner;
     use super::server;
     use super::watchtower;
-    use super::Opinion;
-    use revault_tx::transactions::SpendTransaction;
 
     fn get_dummy_pubkey() -> PublicKey {
         let secp_ctx = Secp256k1::new();
@@ -349,83 +252,22 @@ mod tests {
     }
 
     #[test]
-    fn serde_watchtower_get_spend_requests() {
-        let msg = watchtower::GetSpendRequests {};
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
-    }
-
-    #[test]
-    fn serde_watchtower_spend_requests() {
-        let unsigned_spend_tx: SpendTransaction = get_dummy_spend_tx();
-        let request = watchtower::Request { unsigned_spend_tx };
-        let msg = watchtower::SpendRequests {
-            requests: vec![request],
+    fn serde_watchtower_get_spend_tx() {
+        let msg = watchtower::GetSpendTx {
+            deposit_outpoint: OutPoint::from_str(
+                "6a276a96807dd45ceed9cbd6fd48b5edf185623b23339a1643e19e8dcbf2e474:0",
+            )
+            .unwrap(),
         };
         let serialized_msg = serde_json::to_string(&msg).unwrap();
         let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
 
         assert_eq!(msg, deserialized_msg);
-    }
 
-    #[test]
-    fn serde_watchtower_spend_opinion() {
-        let id = get_dummy_txid();
-        let accepted = false;
-        let reason = Some("teststring");
-        let sig = get_dummy_sig();
-        let pubkey = get_dummy_pubkey();
-        let opinion = Opinion {
-            id,
-            accepted,
-            reason,
-            sig,
-            pubkey,
+        // Response
+        let msg = watchtower::SpendTx {
+            transaction: get_dummy_spend_tx().as_bitcoin_serialized().unwrap(),
         };
-        let msg = watchtower::SpendOpinion { opinion };
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
-    }
-
-    #[test]
-    fn serde_watchtower_get_finalized_spends() {
-        let msg = watchtower::GetFinalizedSpends {};
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
-    }
-
-    #[test]
-    fn serde_watchtower_finalized_spends() {
-        let signed_spend_tx: SpendTransaction = get_dummy_spend_tx();
-        let finalized_spends = vec![server::FinalizeSpend { signed_spend_tx }];
-        let msg = watchtower::FinalizedSpends::new(finalized_spends);
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
-    }
-
-    #[test]
-    fn serde_watchtower_validate_spend() {
-        let id = get_dummy_txid();
-        let accepted = false;
-        let reason = Some("teststring");
-        let sig = get_dummy_sig();
-        let pubkey = get_dummy_pubkey();
-        let opinion = Opinion {
-            id,
-            accepted,
-            reason,
-            sig,
-            pubkey,
-        };
-        let msg = watchtower::ValidateSpend { opinion };
         let serialized_msg = serde_json::to_string(&msg).unwrap();
         let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
 
@@ -513,83 +355,7 @@ mod tests {
     #[test]
     fn serde_server_request_spend() {
         let unsigned_spend_tx: SpendTransaction = get_dummy_spend_tx();
-        let msg = server::RequestSpend { unsigned_spend_tx };
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
-    }
-
-    #[test]
-    fn serde_server_get_spend_opinions() {
-        let id: Txid = get_dummy_txid();
-        let msg = server::GetSpendOpinions { id };
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
-    }
-
-    #[test]
-    fn serde_server_spend_opinions() {
-        let id = get_dummy_txid();
-        let accepted = false;
-        let reason = Some("teststring");
-        let sig = get_dummy_sig();
-        let pubkey = get_dummy_pubkey();
-        let opinion = Opinion {
-            id,
-            accepted,
-            reason,
-            sig,
-            pubkey,
-        };
-        let msg = server::SpendOpinions {
-            opinions: vec![opinion],
-        };
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
-    }
-
-    #[test]
-    fn serde_server_finalize_spend() {
-        let signed_spend_tx: SpendTransaction = get_dummy_spend_tx();
-        let msg = server::FinalizeSpend { signed_spend_tx };
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
-    }
-
-    #[test]
-    fn serde_server_get_spend_validations() {
-        let id: Txid = get_dummy_txid();
-        let msg = server::GetSpendValidations { id };
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
-    }
-
-    #[test]
-    fn serde_server_spend_validations() {
-        let id = get_dummy_txid();
-        let accepted = false;
-        let reason = Some("teststring");
-        let sig = get_dummy_sig();
-        let pubkey = get_dummy_pubkey();
-        let opinion = Opinion {
-            id,
-            accepted,
-            reason,
-            sig,
-            pubkey,
-        };
-        let msg = server::SpendValidations {
-            opinions: vec![opinion],
-        };
+        let msg = server::SetSpendTx::from_spend_tx(unsigned_spend_tx).unwrap();
         let serialized_msg = serde_json::to_string(&msg).unwrap();
         let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
 
