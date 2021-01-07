@@ -219,6 +219,14 @@ mod tests {
         serde_json::from_str(&serde_json::to_string(&psbt_base64).unwrap()).unwrap()
     }
 
+    macro_rules! roundtrip {
+        ($msg:ident) => {
+            let serialized_msg = serde_json::to_string(&$msg).unwrap();
+            let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
+            assert_eq!($msg, deserialized_msg);
+        };
+    }
+
     #[test]
     fn serde_watchtower_sig() {
         let pubkey: PublicKey = get_dummy_pubkey();
@@ -234,10 +242,7 @@ mod tests {
             txid,
             deposit_outpoint,
         };
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
+        roundtrip!(msg);
     }
 
     #[test]
@@ -245,10 +250,7 @@ mod tests {
         let ack = true;
         let txid: Txid = get_dummy_txid();
         let msg = watchtower::SigAck { ack, txid };
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
+        roundtrip!(msg);
     }
 
     #[test]
@@ -259,19 +261,13 @@ mod tests {
             )
             .unwrap(),
         };
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
+        roundtrip!(msg);
 
         // Response
         let msg = watchtower::SpendTx {
             transaction: get_dummy_spend_tx().as_bitcoin_serialized().unwrap(),
         };
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
+        roundtrip!(msg);
     }
 
     #[test]
@@ -286,9 +282,7 @@ mod tests {
             signature: sig.clone(),
             id,
         };
-        let serialized_msg = serde_json::to_string(&msg1).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-        assert_eq!(msg1, deserialized_msg);
+        roundtrip!(msg1);
 
         // Encrypted signature
         let encrypted_signature = server::EncryptedSignature {
@@ -300,19 +294,14 @@ mod tests {
             encrypted_signature,
             id,
         };
-        let serialized_msg = serde_json::to_string(&msg2).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-        assert_eq!(msg2, deserialized_msg);
+        roundtrip!(msg2);
     }
 
     #[test]
     fn serde_server_get_sigs() {
         let id = get_dummy_txid();
         let msg = server::GetSigs { id };
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
+        roundtrip!(msg);
     }
 
     #[test]
@@ -323,9 +312,7 @@ mod tests {
 
         // Cleartext signatures
         let msg1 = server::Sigs { signatures };
-        let serialized_msg = serde_json::to_string(&msg1).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-        assert_eq!(msg1, deserialized_msg);
+        roundtrip!(msg1);
 
         // Encrypted signatures
         let encrypted_signature = server::EncryptedSignature {
@@ -340,45 +327,32 @@ mod tests {
         let msg2 = server::EmergencySigs {
             encrypted_signatures,
         };
-        let serialized_msg = serde_json::to_string(&msg2).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-        assert_eq!(msg2, deserialized_msg);
+        roundtrip!(msg2);
 
         // No signatures
         let signatures = HashMap::new();
         let msg3 = server::Sigs { signatures };
-        let serialized_msg = serde_json::to_string(&msg3).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-        assert_eq!(msg3, deserialized_msg);
+        roundtrip!(msg3);
     }
 
     #[test]
     fn serde_server_request_spend() {
         let unsigned_spend_tx: SpendTransaction = get_dummy_spend_tx();
         let msg = server::SetSpendTx::from_spend_tx(unsigned_spend_tx).unwrap();
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
+        roundtrip!(msg);
     }
 
     #[test]
     fn serde_cosigner_sign() {
         let tx = get_dummy_spend_tx();
         let msg = cosigner::Sign { tx };
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
+        roundtrip!(msg);
     }
 
     #[test]
     fn serder_cosigner_signature_message() {
         let tx = get_dummy_spend_tx();
         let msg = cosigner::SignatureMessage { tx };
-        let serialized_msg = serde_json::to_string(&msg).unwrap();
-        let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
-
-        assert_eq!(msg, deserialized_msg);
+        roundtrip!(msg);
     }
 }
