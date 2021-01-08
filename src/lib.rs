@@ -11,4 +11,5 @@ pub mod noise;
 
 pub mod transport;
 
-pub mod error;
+mod error;
+pub use error::Error;
