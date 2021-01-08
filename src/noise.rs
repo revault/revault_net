@@ -5,6 +5,10 @@
 //!
 
 use crate::error::Error;
+use revault_tx::bitcoin::hashes::hex::FromHex;
+
+use std::str::FromStr;
+
 use snow::{resolvers::SodiumResolver, Builder, HandshakeState, TransportState};
 
 /// The size of a key, either public or private, on the Curve25519
@@ -33,6 +37,16 @@ pub const HANDSHAKE_MESSAGE: &[u8] = b"practical_revault_0";
 /// A static Noise public key
 #[derive(Debug)]
 pub struct NoisePubKey(pub [u8; KEY_SIZE]);
+
+impl FromStr for NoisePubKey {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(
+            FromHex::from_hex(s).map_err(|e| Error::Noise(e.to_string()))?,
+        ))
+    }
+}
 
 /// A static Noise private key
 #[derive(Debug)]
@@ -424,7 +438,7 @@ pub mod tests {
         },
     };
     use snow::{params::NoiseParams, resolvers::SodiumResolver, Builder, Keypair};
-    use std::convert::TryInto;
+    use std::{convert::TryInto, str::FromStr};
 
     #[derive(Debug, Clone)]
     pub enum HandshakeChoice {
@@ -609,5 +623,11 @@ pub mod tests {
 
         let (cli_act_1, _) = KXHandshakeActOne::initiator(&initiator_privkey).unwrap();
         KXHandshakeActTwo::responder(cli_act_1).expect_err("Bad handshake state");
+    }
+
+    #[test]
+    fn test_pubkey_from_str() {
+        NoisePubKey::from_str("61feafb2db96bf650b496c74c24ce92fa608e271b4092405f3364c9f8466df66")
+            .expect("Parsing an invalid but well-encoded pubkey");
     }
 }
