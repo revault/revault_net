@@ -200,8 +200,9 @@ impl KKChannel {
         Ok(KKChannel { transport_state })
     }
 
-    /// Use the channel to encrypt any given message. Pre-fixes the message with
-    /// (big-endian) length field and pads the message with 0s before encryption.
+    /// Use the channel to encrypt a message shorter than [NOISE_MESSAGE_HEADER_SIZE].
+    /// Pre-fixes the message with (big-endian) length field and pads the message with
+    /// 0s before encryption.
     /// On success, returns the ciphertext.
     pub fn encrypt_message(&mut self, message: &[u8]) -> Result<NoiseEncryptedMessage, Error> {
         if message.len() > NOISE_PLAINTEXT_MAX_SIZE {
@@ -209,10 +210,9 @@ impl KKChannel {
         }
         let mut output = vec![0u8; NOISE_MESSAGE_HEADER_SIZE + message.len()];
 
-        let mut prefixed_message = vec![0u8; LENGTH_PREFIX_SIZE + message.len()];
         let message_len: usize = MAC_SIZE + message.len();
-        prefixed_message[..LENGTH_PREFIX_SIZE].copy_from_slice(&message_len.to_be_bytes());
-        prefixed_message[LENGTH_PREFIX_SIZE..].copy_from_slice(message);
+        let mut prefixed_message = message_len.to_be_bytes().to_vec();
+        prefixed_message.extend_from_slice(message);
         self.transport_state
             .write_message(&prefixed_message, &mut output)
             .map_err(|e| Error::Noise(format!("Header encryption failed: {:?}", e)))?;
@@ -220,7 +220,7 @@ impl KKChannel {
         Ok(NoiseEncryptedMessage(output))
     }
 
-    /// Get plaintext bytes from a Noise-encrypted message
+    /// Get plaintext bytes from a valid Noise-encrypted message
     pub fn decrypt_message(&mut self, message: &NoiseEncryptedMessage) -> Result<Vec<u8>, Error> {
         // TODO: could be in NoiseEncryptedMessage's constructor?
         if message.0.len() > NOISE_MESSAGE_MAX_SIZE {
@@ -235,7 +235,8 @@ impl KKChannel {
             .read_message(&message.0, &mut output)
             .map_err(|e| Error::Noise(format!("Failed to decrypt message: {:?}", e)))?;
 
-        // We read the length prefix and the MAC, but we don't care about any of both.
+        // We read the length prefix and the MAC, but we don't care about any of both (we use a
+        // vec, and the MAC is checked by Snow).
         // TODO: bench this against truncating and reverse-then-pop-then-reverse
         Ok(output
             .drain(LENGTH_PREFIX_SIZE..output.len() - MAC_SIZE)
