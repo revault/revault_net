@@ -288,6 +288,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74ff4ece4ff5498718a232e92d53273903609c739052f5edf2a1a42c59586348"
 dependencies = [
  "bitcoin",
+ "serde",
 ]
 
 [[package]]
@@ -392,7 +393,6 @@ dependencies = [
 name = "revault_net"
 version = "0.0.1"
 dependencies = [
- "bitcoin",
  "revault_tx",
  "serde",
  "snow",
@@ -409,7 +409,7 @@ dependencies = [
 [[package]]
 name = "revault_tx"
 version = "0.0.1"
-source = "git+https://github.com/re-vault/revault_tx#f4d801844ac5f12702ff0c43dce2200b0905a25d"
+source = "git+https://github.com/re-vault/revault#283f2d133dfdeb967ef5098bff11b3a6d5d11ae5"
 dependencies = [
  "base64",
  "bitcoinconsensus",
