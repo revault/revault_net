@@ -7,7 +7,7 @@
 use crate::error::Error;
 use revault_tx::bitcoin::hashes::hex::FromHex;
 
-use std::str::FromStr;
+use std::{convert::TryInto, str::FromStr};
 
 use snow::{resolvers::SodiumResolver, Builder, HandshakeState, TransportState};
 
@@ -31,7 +31,7 @@ pub const KK_MSG_2_SIZE: usize = KEY_SIZE + MAC_SIZE;
 pub const HANDSHAKE_MESSAGE: &[u8] = b"practical_revault_0";
 
 /// A static Noise public key
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct NoisePubKey(pub [u8; KEY_SIZE]);
 
 impl FromStr for NoisePubKey {
@@ -94,39 +94,42 @@ impl KKHandshakeActOne {
     /// Start the first act of the handshake as a responder (reading e, es, ss and doing wizardry with it)
     pub fn responder(
         my_privkey: &NoisePrivKey,
-        their_pubkey: &NoisePubKey,
+        their_possible_pubkeys: &[NoisePubKey],
         message: &KKMessageActOne,
     ) -> Result<KKHandshakeActOne, Error> {
-        // Build the initial responder state
-        let builder = Builder::with_resolver(
-            "Noise_KK_25519_ChaChaPoly_SHA256"
-                .parse()
-                .expect("Valid params"),
-            Box::new(SodiumResolver::default()),
-        );
-        let mut state = builder
-            .local_private_key(&my_privkey.0)
-            .remote_public_key(&their_pubkey.0)
-            .build_responder()
-            .map_err(|e| Error::Noise(format!("Failed to build state for responder: {:?}", e)))?;
+        // TODO: estimate how inefficient it is.
+        for their_pubkey in their_possible_pubkeys {
+            // Build the initial responder state
+            let builder = Builder::with_resolver(
+                "Noise_KK_25519_ChaChaPoly_SHA256"
+                    .parse()
+                    .expect("Valid params"),
+                Box::new(SodiumResolver::default()),
+            );
+            let mut state = builder
+                .local_private_key(&my_privkey.0)
+                .remote_public_key(&their_pubkey.0)
+                .build_responder()
+                .map_err(|e| {
+                    Error::Noise(format!("Failed to build state for responder: {:?}", e))
+                })?;
 
-        // In handshake mode we don't actually care about the message
-        let mut msg = [0u8; KK_MSG_1_SIZE];
-        state.read_message(&message.0, &mut msg).map_err(|e| {
-            Error::Noise(format!(
-                "Failed to read first message for responder: {:?}",
-                e
-            ))
-        })?;
-        if &msg[..HANDSHAKE_MESSAGE.len()] != HANDSHAKE_MESSAGE {
-            return Err(Error::Noise(format!(
-                "Wrong handshake message. Expected '{:x?}' got '{:x?}'.",
-                HANDSHAKE_MESSAGE,
-                &msg[..HANDSHAKE_MESSAGE.len()]
-            )));
+            let mut msg = [0u8; KK_MSG_1_SIZE];
+            if state.read_message(&message.0, &mut msg).is_err() {
+                continue;
+            }
+            if &msg[..HANDSHAKE_MESSAGE.len()] != HANDSHAKE_MESSAGE {
+                return Err(Error::Noise(format!(
+                    "Wrong handshake message. Expected '{:x?}' got '{:x?}'.",
+                    HANDSHAKE_MESSAGE,
+                    &msg[..HANDSHAKE_MESSAGE.len()]
+                )));
+            }
+
+            return Ok(KKHandshakeActOne { state });
         }
 
-        Ok(KKHandshakeActOne { state })
+        Err(Error::Noise("No matching pubkey".to_string()))
     }
 }
 
@@ -242,6 +245,20 @@ impl KKChannel {
             .drain(LENGTH_PREFIX_SIZE..output.len() - MAC_SIZE)
             .collect())
     }
+
+    /// Get the static public key of the peer
+    pub fn remote_static(&self) -> NoisePubKey {
+        NoisePubKey(
+            self.transport_state
+                .get_remote_static()
+                .expect(
+                    "We could not have settled the KK channel without their key. \
+                     And if we could, better to crash now!",
+                )
+                .try_into()
+                .expect("Our keys aren't 32 bytes anymore?"),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -303,7 +320,7 @@ pub mod tests {
 
         // server
         let serv_act_1 =
-            KKHandshakeActOne::responder(&responder_privkey, &initiator_pubkey, &msg_1).unwrap();
+            KKHandshakeActOne::responder(&responder_privkey, &[initiator_pubkey], &msg_1).unwrap();
         let (serv_act_2, msg_2) = KKHandshakeActTwo::responder(serv_act_1).unwrap();
         let mut server_channel = KKChannel::from_handshake(serv_act_2).unwrap();
 
@@ -344,7 +361,7 @@ pub mod tests {
 
         // server
         let serv_act_1 =
-            KKHandshakeActOne::responder(&responder_privkey, &initiator_pubkey, &msg_1).unwrap();
+            KKHandshakeActOne::responder(&responder_privkey, &[initiator_pubkey], &msg_1).unwrap();
         let (serv_act_2, _msg_2) = KKHandshakeActTwo::responder(serv_act_1).unwrap();
         let mut server_channel = KKChannel::from_handshake(serv_act_2).unwrap();
 
@@ -392,7 +409,7 @@ pub mod tests {
             .expect("The first act is valid.");
 
         let bad_msg = KKMessageActOne([1u8; KK_MSG_1_SIZE]);
-        KKHandshakeActOne::responder(&responder_privkey, &initiator_pubkey, &bad_msg)
+        KKHandshakeActOne::responder(&responder_privkey, &[initiator_pubkey], &bad_msg)
             .expect_err("This one is invalid as bad_msg cannot be decrypted.");
 
         let bad_msg = KKMessageActTwo([1u8; KK_MSG_2_SIZE]);

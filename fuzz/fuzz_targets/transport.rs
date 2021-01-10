@@ -32,7 +32,7 @@ fn kk_client_server(data: &[u8]) {
         cli_channel.write(&msg_sent).expect("Sending test message");
     });
 
-    let mut serv_transport = KKTransport::accept(listener, RESP_PRIVKEY, INIT_PUBKEY).unwrap();
+    let mut serv_transport = KKTransport::accept(listener, RESP_PRIVKEY, &[INIT_PUBKEY]).unwrap();
     if let Ok(msg) = serv_transport.read() {
         assert_eq!(&msg, data);
     }

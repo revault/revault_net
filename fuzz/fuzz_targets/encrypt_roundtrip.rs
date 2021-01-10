@@ -22,7 +22,7 @@ const RESP_PUBKEY: NoisePubKey = NoisePubKey([
 
 fn kk_channels() -> (KKChannel, KKChannel) {
     let (init_1, msg_1) = KKHandshakeActOne::initiator(&INIT_PRIVKEY, &RESP_PUBKEY).unwrap();
-    let resp_1 = KKHandshakeActOne::responder(&RESP_PRIVKEY, &INIT_PUBKEY, &msg_1).unwrap();
+    let resp_1 = KKHandshakeActOne::responder(&RESP_PRIVKEY, &[INIT_PUBKEY], &msg_1).unwrap();
 
     let (resp_2, msg_2) = KKHandshakeActTwo::responder(resp_1).unwrap();
     let server_channel = KKChannel::from_handshake(resp_2).unwrap();

@@ -57,12 +57,13 @@ impl KKTransport {
         Ok(KKTransport { stream, channel })
     }
 
-    /// Accept an incoming connection and immediately perform the noise KX handshake
-    /// as a responder with the given keys.
+    /// Accept an incoming connection and immediately perform the noise KK handshake
+    /// as a responder with our single private key and a set of possible public key for them.
+    /// This is used by servers to identify the origin of the message.
     pub fn accept(
         listener: TcpListener,
         my_noise_privkey: NoisePrivKey,
-        their_noise_pubkey: NoisePubKey,
+        their_possible_pubkeys: &[NoisePubKey],
     ) -> Result<KKTransport, Error> {
         let (mut stream, _) = listener
             .accept()
@@ -76,7 +77,7 @@ impl KKTransport {
         let msg_act_1 = KKMessageActOne(msg_1);
 
         let serv_act_1 =
-            KKHandshakeActOne::responder(&my_noise_privkey, &their_noise_pubkey, &msg_act_1)
+            KKHandshakeActOne::responder(&my_noise_privkey, their_possible_pubkeys, &msg_act_1)
                 .map_err(|e| Error::Noise(format!("Failed to respond in act 1: {:?}", e)))?;
         let (serv_act_2, msg_2) = KKHandshakeActTwo::responder(serv_act_1)
             .map_err(|e| Error::Noise(format!("Failed to respond in act 2: {:?}", e)))?;
@@ -130,6 +131,11 @@ impl KKTransport {
         let encrypted_msg = NoiseEncryptedMessage(encrypted_msg);
         self.channel.decrypt_message(&encrypted_msg)
     }
+
+    /// Get the static public key of the peer
+    pub fn remote_static(&self) -> NoisePubKey {
+        self.channel.remote_static()
+    }
 }
 
 #[cfg(test)]
@@ -175,7 +181,7 @@ mod tests {
             msg
         });
 
-        let mut server_transport = KKTransport::accept(listener, server_privkey, client_pubkey)
+        let mut server_transport = KKTransport::accept(listener, server_privkey, &[client_pubkey])
             .expect("Server channel binding and accepting");
 
         let sent_msg = cli_thread.join().unwrap();
