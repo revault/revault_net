@@ -20,32 +20,9 @@ const RESP_PUBKEY: NoisePubKey = NoisePubKey([
     108, 67, 194, 161, 42, 72, 15, 38, 109, 193, 45, 125,
 ]);
 
-fn kx_channels() -> (KXChannel, KXChannel) {
-    let (init_1, msg_1) = KXHandshakeActOne::initiator(&INIT_PRIVKEY).unwrap();
-    let resp_1 = KXHandshakeActOne::responder(&RESP_PRIVKEY, &INIT_PUBKEY, &msg_1).unwrap();
-
-    let (resp_2, msg_2) = KXHandshakeActTwo::responder(resp_1).unwrap();
-    let server_channel = KXChannel::from_handshake(resp_2).unwrap();
-
-    let init_2 = KXHandshakeActTwo::initiator(init_1, &msg_2).unwrap();
-    let client_channel = KXChannel::from_handshake(init_2).unwrap();
-
-    (server_channel, client_channel)
-}
-
-fn kx_roundtrip(client_channel: &mut KXChannel, server_channel: &mut KXChannel, data: &[u8]) {
-    let cypher = encrypt_message(client_channel, &data).unwrap();
-    let plaintext = decrypt_message(server_channel, &cypher).unwrap();
-    assert_eq!(&plaintext, data);
-
-    let cypher = encrypt_message(server_channel, &data).unwrap();
-    let plaintext = decrypt_message(client_channel, &cypher).unwrap();
-    assert_eq!(&plaintext, data);
-}
-
 fn kk_channels() -> (KKChannel, KKChannel) {
     let (init_1, msg_1) = KKHandshakeActOne::initiator(&INIT_PRIVKEY, &RESP_PUBKEY).unwrap();
-    let resp_1 = KKHandshakeActOne::responder(&RESP_PRIVKEY, &INIT_PUBKEY, &msg_1).unwrap();
+    let resp_1 = KKHandshakeActOne::responder(&RESP_PRIVKEY, &[INIT_PUBKEY], &msg_1).unwrap();
 
     let (resp_2, msg_2) = KKHandshakeActTwo::responder(resp_1).unwrap();
     let server_channel = KKChannel::from_handshake(resp_2).unwrap();
@@ -57,19 +34,17 @@ fn kk_channels() -> (KKChannel, KKChannel) {
 }
 
 fn kk_roundtrip(client_channel: &mut KKChannel, server_channel: &mut KKChannel, data: &[u8]) {
-    let cypher = encrypt_message(client_channel, &data).unwrap();
-    decrypt_message(server_channel, &cypher).unwrap();
+    let cypher = client_channel.encrypt_message(&data).unwrap();
+    server_channel.decrypt_message(&cypher).unwrap();
 
-    let cypher = encrypt_message(server_channel, &data).unwrap();
-    decrypt_message(client_channel, &cypher).unwrap();
+    let cypher = server_channel.encrypt_message(&data).unwrap();
+    client_channel.decrypt_message(&cypher).unwrap();
 }
 
 fuzz_target!(|data: &[u8]| {
-    let (mut kx_client, mut kx_server) = kx_channels();
     let (mut kk_client, mut kk_server) = kk_channels();
 
     if data.len() < NOISE_MESSAGE_MAX_SIZE {
-        kx_roundtrip(&mut kx_client, &mut kx_server, data);
         kk_roundtrip(&mut kk_client, &mut kk_server, data);
 
         // Don't unwrap: they are surely invalid. But be sure we don't crash while
@@ -77,10 +52,8 @@ fuzz_target!(|data: &[u8]| {
         #[allow(unused)]
         if data.len() > NOISE_MESSAGE_HEADER_SIZE {
             let data = NoiseEncryptedMessage(data.to_vec());
-            decrypt_message(&mut kx_client, &data);
-            decrypt_message(&mut kx_server, &data);
-            decrypt_message(&mut kk_client, &data);
-            decrypt_message(&mut kk_server, &data);
+            kk_client.decrypt_message(&data);
+            kk_server.decrypt_message(&data);
         }
     }
 });

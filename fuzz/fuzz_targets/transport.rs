@@ -21,23 +21,6 @@ const RESP_PUBKEY: NoisePubKey = NoisePubKey([
     108, 67, 194, 161, 42, 72, 15, 38, 109, 193, 45, 125,
 ]);
 
-fn kx_client_server(data: &[u8]) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let msg_sent = data.to_vec();
-
-    thread::spawn(move || {
-        let mut cli_channel =
-            KXTransport::connect(addr, INIT_PRIVKEY).expect("Client channel connecting");
-        cli_channel.write(&msg_sent).expect("Sending test message");
-    });
-
-    let mut serv_transport = KXTransport::accept(listener, RESP_PRIVKEY, INIT_PUBKEY).unwrap();
-    if let Ok(msg) = serv_transport.read() {
-        assert_eq!(&msg, data);
-    }
-}
-
 fn kk_client_server(data: &[u8]) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -49,13 +32,12 @@ fn kk_client_server(data: &[u8]) {
         cli_channel.write(&msg_sent).expect("Sending test message");
     });
 
-    let mut serv_transport = KKTransport::accept(listener, RESP_PRIVKEY, INIT_PUBKEY).unwrap();
+    let mut serv_transport = KKTransport::accept(listener, RESP_PRIVKEY, &[INIT_PUBKEY]).unwrap();
     if let Ok(msg) = serv_transport.read() {
         assert_eq!(&msg, data);
     }
 }
 
 fuzz_target!(|data: &[u8]| {
-    kx_client_server(data);
     kk_client_server(data);
 });
