@@ -82,6 +82,8 @@ pub mod server {
     /// be used for a specific unvault.
     #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
     pub struct SetSpendTx {
+        /// Deposit outpoint of the vault this transaction is spending
+        pub deposit_outpoint: OutPoint,
         /// Fully signed spend transaction
         transaction: Vec<u8>,
     }
@@ -89,10 +91,20 @@ pub mod server {
     impl SetSpendTx {
         /// Create a SetSpendTx message out of a SpendTransaction. The SpendTransaction MUST
         /// have been finalized beforehand!
-        pub fn from_spend_tx(tx: SpendTransaction) -> Result<Self, revault_tx::Error> {
+        pub fn from_spend_tx(
+            deposit_outpoint: OutPoint,
+            tx: SpendTransaction,
+        ) -> Result<Self, revault_tx::Error> {
             // FIXME: implement into_bitcoin_serialized upstream!
-            tx.as_bitcoin_serialized()
-                .map(|transaction| Self { transaction })
+            tx.as_bitcoin_serialized().map(|transaction| Self {
+                deposit_outpoint,
+                transaction,
+            })
+        }
+
+        /// Get the raw spend transaction
+        pub fn spend_tx(self) -> Vec<u8> {
+            self.transaction
         }
     }
 
@@ -335,8 +347,12 @@ mod tests {
 
     #[test]
     fn serde_server_request_spend() {
+        let deposit_outpoint = OutPoint::from_str(
+            "6e4977728e7100db80c30751f27cf834b7a1e02d083a4338874e48d1f3694446:0",
+        )
+        .unwrap();
         let unsigned_spend_tx: SpendTransaction = get_dummy_spend_tx();
-        let msg = server::SetSpendTx::from_spend_tx(unsigned_spend_tx).unwrap();
+        let msg = server::SetSpendTx::from_spend_tx(deposit_outpoint, unsigned_spend_tx).unwrap();
         roundtrip!(msg);
     }
 
