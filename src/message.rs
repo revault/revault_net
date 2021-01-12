@@ -16,7 +16,7 @@ pub mod watchtower {
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
-    /// Message from a wallet client to share all signatures for a revocation
+    /// Message from a stakeholder to share all signatures for a revocation
     /// transaction with its watchtower.
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     pub struct Sig {
@@ -29,7 +29,7 @@ pub mod watchtower {
         pub deposit_outpoint: OutPoint,
     }
 
-    /// Message from the watchtower to wallet client to acknowledge that it has
+    /// Message from the watchtower to stakeholder to acknowledge that it has
     /// sufficient signatures and fees to begin guarding the vault with the
     /// revocation transaction
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -39,23 +39,6 @@ pub mod watchtower {
         /// Revocation transaction id
         pub txid: Txid,
     }
-
-    /// Sent by a watchtower to the synchronisation server after an unvault
-    /// event to learn about the spend transaction.
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct GetSpendTx {
-        /// Outpoint designing the deposit utxo that created the vault this
-        /// spend tx is spending.
-        pub deposit_outpoint: OutPoint,
-    }
-
-    /// The response to the [GetSpendTx] request.
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct SpendTx {
-        /// The Bitcoin-serialized Spend transaction. The sync server isn't
-        /// creating it so there is no point to create it from_spend_tx().
-        pub transaction: Vec<u8>,
-    }
 }
 
 /// Synchronisation Server
@@ -64,14 +47,15 @@ pub mod server {
         bitcoin::{
             hash_types::Txid,
             secp256k1::{key::PublicKey, Signature},
+            OutPoint,
         },
         transactions::{RevaultTransaction, SpendTransaction},
     };
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
-    /// Message from a wallet client to sync server to share (at any time) the
-    /// signature for an usual transaction with all participants.
+    /// Message from a stakeholder client to sync server to share (at any time)
+    /// the signature for an usual transaction with all participants.
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
     pub struct Sig {
         /// Secp256k1 public key used to sign the transaction (hex)
@@ -148,9 +132,26 @@ pub mod server {
                 .map(|transaction| Self { transaction })
         }
     }
+
+    /// Sent by a watchtower to the synchronisation server after an unvault
+    /// event to learn about the spend transaction.
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    pub struct GetSpendTx {
+        /// Outpoint designing the deposit utxo that created the vault this
+        /// spend tx is spending.
+        pub deposit_outpoint: OutPoint,
+    }
+
+    /// The response to the [GetSpendTx] request.
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    pub struct SpendTx {
+        /// The Bitcoin-serialized Spend transaction. The sync server isn't
+        /// creating it so there is no point to create it from_spend_tx().
+        pub transaction: Vec<u8>,
+    }
 }
 
-///Cosigning Server
+/// Cosigning Server
 pub mod cosigner {
     use revault_tx::transactions::SpendTransaction;
     use serde::{Deserialize, Serialize};
@@ -255,7 +256,7 @@ mod tests {
 
     #[test]
     fn serde_watchtower_get_spend_tx() {
-        let msg = watchtower::GetSpendTx {
+        let msg = server::GetSpendTx {
             deposit_outpoint: OutPoint::from_str(
                 "6a276a96807dd45ceed9cbd6fd48b5edf185623b23339a1643e19e8dcbf2e474:0",
             )
@@ -264,7 +265,7 @@ mod tests {
         roundtrip!(msg);
 
         // Response
-        let msg = watchtower::SpendTx {
+        let msg = server::SpendTx {
             transaction: get_dummy_spend_tx().as_bitcoin_serialized().unwrap(),
         };
         roundtrip!(msg);

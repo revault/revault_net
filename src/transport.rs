@@ -61,8 +61,8 @@ impl KKTransport {
     /// as a responder with our single private key and a set of possible public key for them.
     /// This is used by servers to identify the origin of the message.
     pub fn accept(
-        listener: TcpListener,
-        my_noise_privkey: NoisePrivKey,
+        listener: &TcpListener,
+        my_noise_privkey: &NoisePrivKey,
         their_possible_pubkeys: &[NoisePubKey],
     ) -> Result<KKTransport, Error> {
         let (mut stream, _) = listener
@@ -71,6 +71,7 @@ impl KKTransport {
 
         // read msg_1 from stream
         let mut msg_1 = [0u8; KK_MSG_1_SIZE];
+        // FIXME: timeout?
         stream.read_exact(&mut msg_1).map_err(|e| {
             Error::Transport(format!("Failed to read message 1 from TcpStream: {:?}", e))
         })?;
@@ -104,6 +105,8 @@ impl KKTransport {
     }
 
     /// Read a message from the other end of the encrypted communication channel.
+    /// Will return on connection interruption. Note that this blocks (without timeout)
+    /// until the socket is closed.
     pub fn read(&mut self) -> Result<Vec<u8>, Error> {
         let mut encrypted_msg = vec![0u8; NOISE_MESSAGE_MAX_SIZE];
         let mut bytes_read = 0;
@@ -113,14 +116,18 @@ impl KKTransport {
         loop {
             match self.stream.read(&mut encrypted_msg) {
                 Ok(0) => break,
-                Ok(n) => bytes_read += n,
+                Ok(n) => {
+                    bytes_read += n;
+                    if bytes_read > NOISE_MESSAGE_MAX_SIZE {
+                        // In this case no need to go further, they broke the protocol!
+                        return Err(Error::Transport(format!("Noise message too big.")));
+                    }
+                }
                 Err(e) => match e.kind() {
-                    // Fine, we may have gotten the message anyways. They just aren't polite
-                    io::ErrorKind::WouldBlock
-                    | io::ErrorKind::Interrupted
+                    io::ErrorKind::Interrupted
                     | io::ErrorKind::ConnectionReset
                     | io::ErrorKind::ConnectionAborted
-                    | io::ErrorKind::BrokenPipe => break,
+                    | io::ErrorKind::BrokenPipe => return Ok(vec![]),
                     // That's actually bad
                     _ => return Err(Error::Transport(format!("Reading from stream: '{}'", e))),
                 },
@@ -181,8 +188,9 @@ mod tests {
             msg
         });
 
-        let mut server_transport = KKTransport::accept(listener, server_privkey, &[client_pubkey])
-            .expect("Server channel binding and accepting");
+        let mut server_transport =
+            KKTransport::accept(&listener, &server_privkey, &[client_pubkey])
+                .expect("Server channel binding and accepting");
 
         let sent_msg = cli_thread.join().unwrap();
         let received_msg = server_transport.read().unwrap();

@@ -31,7 +31,7 @@ pub const KK_MSG_2_SIZE: usize = KEY_SIZE + MAC_SIZE;
 pub const HANDSHAKE_MESSAGE: &[u8] = b"practical_revault_0";
 
 /// A static Noise public key
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct NoisePubKey(pub [u8; KEY_SIZE]);
 
 impl FromStr for NoisePubKey {
