@@ -13,3 +13,5 @@ pub mod transport;
 
 mod error;
 pub use error::Error;
+
+pub use revault_tx::bitcoin;
