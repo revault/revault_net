@@ -16,7 +16,7 @@ pub mod watchtower {
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
-    /// Message from a wallet client to share all signatures for a revocation
+    /// Message from a stakeholder to share all signatures for a revocation
     /// transaction with its watchtower.
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     pub struct Sig {
@@ -29,7 +29,7 @@ pub mod watchtower {
         pub deposit_outpoint: OutPoint,
     }
 
-    /// Message from the watchtower to wallet client to acknowledge that it has
+    /// Message from the watchtower to stakeholder to acknowledge that it has
     /// sufficient signatures and fees to begin guarding the vault with the
     /// revocation transaction
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -38,6 +38,74 @@ pub mod watchtower {
         pub ack: bool,
         /// Revocation transaction id
         pub txid: Txid,
+    }
+}
+
+/// Synchronisation Server
+pub mod server {
+    use revault_tx::{
+        bitcoin::{
+            hash_types::Txid,
+            secp256k1::{key::PublicKey, Signature},
+            OutPoint,
+        },
+        transactions::{RevaultTransaction, SpendTransaction},
+    };
+    use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
+
+    /// Some of the signatures we exchange may be encrypted (emergency tx ones).
+    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+    pub enum RevaultSignature {
+        /// A plaintext (hex) signature
+        PlaintextSig(Signature),
+        /// An encryped (b64) signature
+        EncryptedSig {
+            /// Curve25519 public key used to encrypt the signature
+            pubkey: Vec<u8>,
+            /// Encrypted Bitcoin ECDSA signature
+            encrypted_signature: Vec<u8>,
+        },
+    }
+
+    /// Message response to get_sigs from sync server to wallet client with a
+    /// (potentially incomplete) mapping of each public key to each signature
+    /// required to verify this **usual** transaction
+    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+    pub struct Sigs {
+        /// Mapping of public keys to ECDSA signatures for the requested usual
+        /// transaction.
+        pub signatures: HashMap<PublicKey, RevaultSignature>,
+    }
+
+    /// Sent by a manager to advertise the spend transaction that will eventually
+    /// be used for a specific unvault.
+    #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+    pub struct SetSpendTx {
+        /// Deposit outpoint of the vault this transaction is spending
+        pub deposit_outpoint: OutPoint,
+        /// Fully signed spend transaction
+        transaction: Vec<u8>,
+    }
+
+    impl SetSpendTx {
+        /// Create a SetSpendTx message out of a SpendTransaction. The SpendTransaction MUST
+        /// have been finalized beforehand!
+        pub fn from_spend_tx(
+            deposit_outpoint: OutPoint,
+            tx: SpendTransaction,
+        ) -> Result<Self, revault_tx::Error> {
+            // FIXME: implement into_bitcoin_serialized upstream!
+            tx.as_bitcoin_serialized().map(|transaction| Self {
+                deposit_outpoint,
+                transaction,
+            })
+        }
+
+        /// Get the raw spend transaction
+        pub fn spend_tx(self) -> Vec<u8> {
+            self.transaction
+        }
     }
 
     /// Sent by a watchtower to the synchronisation server after an unvault
@@ -56,101 +124,48 @@ pub mod watchtower {
         /// creating it so there is no point to create it from_spend_tx().
         pub transaction: Vec<u8>,
     }
-}
 
-/// Synchronisation Server
-pub mod server {
-    use revault_tx::{
-        bitcoin::{
-            hash_types::Txid,
-            secp256k1::{key::PublicKey, Signature},
-        },
-        transactions::{RevaultTransaction, SpendTransaction},
-    };
-    use serde::{Deserialize, Serialize};
-    use std::collections::HashMap;
-
-    /// Message from a wallet client to sync server to share (at any time) the
-    /// signature for an usual transaction with all participants.
+    /// Message from a stakeholder client to sync server to share (at any time)
+    /// the signature for an usual transaction with all participants.
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
     pub struct Sig {
         /// Secp256k1 public key used to sign the transaction (hex)
         pub pubkey: PublicKey,
         /// Bitcoin ECDSA signature as hex
-        pub signature: Signature,
-        /// Txid of the transaction the signature applies to
-        pub id: Txid,
-    }
-
-    /// An encrypted signature of a transaction
-    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub struct EncryptedSignature {
-        /// Curve25519 public key used to encrypt the signature
-        pub pubkey: Vec<u8>,
-        /// base64-encoded encrypted Bitcoin ECDSA signature
-        pub encrypted_signature: String,
-    }
-
-    /// 'Sig' message from a wallet client to sync server to share (at any time) the
-    /// signature for an emergency transaction with all participants.
-    /// Special-cased as the Emergency transaction signature is encrypted.
-    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub struct EmergencySig {
-        /// Secp256k1 public key used to sign the transaction (hex)
-        pub pubkey: PublicKey,
-        /// Bitcoin ECDSA signature as hex (for usual transactions)
-        pub encrypted_signature: EncryptedSignature,
+        pub signature: RevaultSignature,
         /// Txid of the transaction the signature applies to
         pub id: Txid,
     }
 
     /// Sent by a wallet to retrieve all signatures for a specific transaction
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
     pub struct GetSigs {
         /// Transaction id
         pub id: Txid,
     }
 
-    /// Message response to get_sigs from sync server to wallet client with a
-    /// (potentially incomplete) mapping of each public key to each signature
-    /// required to verify this **usual** transaction
+    /// A message sent from a stakeholder to the Coordinator
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub struct Sigs {
-        /// Mapping of public keys to ECDSA signatures for the requested usual
-        /// transaction.
-        pub signatures: HashMap<PublicKey, Signature>,
+    #[serde(untagged)]
+    pub enum FromStakeholder {
+        /// Stakeholders can push signatures
+        Sig(Sig),
+        /// Stakeholders can fetch signatures
+        GetSigs(GetSigs),
     }
 
-    /// Message response to get_sigs from sync server to wallet client with a
-    /// (potentially incomplete) mapping of each public key to each signature
-    /// required to verify this **emergency** transaction
+    /// A message sent from a manager to the Coordinator
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub struct EmergencySigs {
-        /// Mapping of public keys to encrypted signatures for the requested emergency
-        /// transaction.
-        pub encrypted_signatures: HashMap<PublicKey, Vec<EncryptedSignature>>,
-    }
-
-    /// Sent by a manager to advertise the spend transaction that will eventually
-    /// be used for a specific unvault.
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct SetSpendTx {
-        /// Fully signed spend transaction
-        transaction: Vec<u8>,
-    }
-
-    impl SetSpendTx {
-        /// Create a SetSpendTx message out of a SpendTransaction. The SpendTransaction MUST
-        /// have been finalized beforehand!
-        pub fn from_spend_tx(tx: SpendTransaction) -> Result<Self, revault_tx::Error> {
-            // FIXME: implement into_bitcoin_serialized upstream!
-            tx.as_bitcoin_serialized()
-                .map(|transaction| Self { transaction })
-        }
+    #[serde(untagged)]
+    pub enum FromManager {
+        /// Managers can set a spend transaction
+        SetSpend(SetSpendTx),
+        /// Managers can fetch pre-signed transaction signatures
+        GetSigs(GetSigs),
     }
 }
 
-///Cosigning Server
+/// Cosigning Server
 pub mod cosigner {
     use revault_tx::transactions::SpendTransaction;
     use serde::{Deserialize, Serialize};
@@ -255,7 +270,7 @@ mod tests {
 
     #[test]
     fn serde_watchtower_get_spend_tx() {
-        let msg = watchtower::GetSpendTx {
+        let msg = server::GetSpendTx {
             deposit_outpoint: OutPoint::from_str(
                 "6a276a96807dd45ceed9cbd6fd48b5edf185623b23339a1643e19e8dcbf2e474:0",
             )
@@ -264,7 +279,7 @@ mod tests {
         roundtrip!(msg);
 
         // Response
-        let msg = watchtower::SpendTx {
+        let msg = server::SpendTx {
             transaction: get_dummy_spend_tx().as_bitcoin_serialized().unwrap(),
         };
         roundtrip!(msg);
@@ -277,56 +292,51 @@ mod tests {
         let id = get_dummy_txid();
 
         // Cleartext signature
-        let msg1 = server::Sig {
+        let msg1 = server::FromStakeholder::Sig(server::Sig {
             pubkey,
-            signature: sig.clone(),
+            signature: server::RevaultSignature::PlaintextSig(sig),
             id,
-        };
+        });
         roundtrip!(msg1);
 
         // Encrypted signature
-        let encrypted_signature = server::EncryptedSignature {
+        let signature = server::RevaultSignature::EncryptedSig {
             pubkey: Vec::new(),
-            encrypted_signature: String::new(),
+            encrypted_signature: Vec::new(),
         };
-        let msg2 = server::EmergencySig {
+        let msg2 = server::FromStakeholder::Sig(server::Sig {
             pubkey,
-            encrypted_signature,
+            signature,
             id,
-        };
+        });
         roundtrip!(msg2);
     }
 
     #[test]
     fn serde_server_get_sigs() {
         let id = get_dummy_txid();
-        let msg = server::GetSigs { id };
+        let msg = server::FromStakeholder::GetSigs(server::GetSigs { id });
         roundtrip!(msg);
     }
 
     #[test]
     fn serde_server_sigs() {
         let pubkey: PublicKey = get_dummy_pubkey();
-        let sig: Signature = get_dummy_sig();
-        let signatures: HashMap<PublicKey, Signature> = [(pubkey, sig)].iter().cloned().collect();
+        let sig = server::RevaultSignature::PlaintextSig(get_dummy_sig());
+        let signatures: HashMap<PublicKey, server::RevaultSignature> =
+            [(pubkey, sig)].iter().cloned().collect();
 
         // Cleartext signatures
         let msg1 = server::Sigs { signatures };
         roundtrip!(msg1);
 
         // Encrypted signatures
-        let encrypted_signature = server::EncryptedSignature {
+        let encrypted_signature = server::RevaultSignature::EncryptedSig {
             pubkey: Vec::new(),
-            encrypted_signature: String::new(),
+            encrypted_signature: Vec::new(),
         };
-        let encrypted_signatures: HashMap<PublicKey, Vec<server::EncryptedSignature>> =
-            [(pubkey, vec![encrypted_signature])]
-                .iter()
-                .cloned()
-                .collect();
-        let msg2 = server::EmergencySigs {
-            encrypted_signatures,
-        };
+        let signatures = [(pubkey, encrypted_signature)].iter().cloned().collect();
+        let msg2 = server::Sigs { signatures };
         roundtrip!(msg2);
 
         // No signatures
@@ -337,8 +347,12 @@ mod tests {
 
     #[test]
     fn serde_server_request_spend() {
+        let deposit_outpoint = OutPoint::from_str(
+            "6e4977728e7100db80c30751f27cf834b7a1e02d083a4338874e48d1f3694446:0",
+        )
+        .unwrap();
         let unsigned_spend_tx: SpendTransaction = get_dummy_spend_tx();
-        let msg = server::SetSpendTx::from_spend_tx(unsigned_spend_tx).unwrap();
+        let msg = server::SetSpendTx::from_spend_tx(deposit_outpoint, unsigned_spend_tx).unwrap();
         roundtrip!(msg);
     }
 
