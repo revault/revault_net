@@ -14,7 +14,7 @@ pub mod watchtower {
         OutPoint,
     };
     use serde::{Deserialize, Serialize};
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     /// Message from a stakeholder to share all signatures for a revocation
     /// transaction with its watchtower.
@@ -22,7 +22,7 @@ pub mod watchtower {
     pub struct Sig {
         /// A sufficient set of public keys and associated ALL|ANYONECANPAY
         /// bitcoin ECDSA signatures to validate the revocation transaction
-        pub signatures: HashMap<PublicKey, Signature>,
+        pub signatures: BTreeMap<PublicKey, Signature>,
         /// Revocation transaction id
         pub txid: Txid,
         /// Deposit outpoint of this vault
@@ -52,7 +52,7 @@ pub mod server {
         transactions::{RevaultTransaction, SpendTransaction},
     };
     use serde::{Deserialize, Serialize};
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     /// Some of the signatures we exchange may be encrypted (emergency tx ones).
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -75,7 +75,7 @@ pub mod server {
     pub struct Sigs {
         /// Mapping of public keys to ECDSA signatures for the requested usual
         /// transaction.
-        pub signatures: HashMap<PublicKey, RevaultSignature>,
+        pub signatures: BTreeMap<PublicKey, RevaultSignature>,
     }
 
     /// Sent by a manager to advertise the spend transaction that will eventually
@@ -189,7 +189,7 @@ pub mod cosigner {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, str::FromStr};
+    use std::{collections::BTreeMap, str::FromStr};
 
     use revault_tx::{
         bitcoin::{
@@ -246,7 +246,7 @@ mod tests {
     fn serde_watchtower_sig() {
         let pubkey: PublicKey = get_dummy_pubkey();
         let sig: Signature = get_dummy_sig();
-        let signatures: HashMap<PublicKey, Signature> = [(pubkey, sig)].iter().cloned().collect();
+        let signatures: BTreeMap<PublicKey, Signature> = [(pubkey, sig)].iter().cloned().collect();
         let txid: Txid = get_dummy_txid();
         let deposit_outpoint = OutPoint::from_str(
             "3694ef9e8fcd78e9b8165a41e6f5e2b5f10bcd92c6d6e42b3325a850df56cd83:0",
@@ -323,7 +323,7 @@ mod tests {
     fn serde_server_sigs() {
         let pubkey: PublicKey = get_dummy_pubkey();
         let sig = server::RevaultSignature::PlaintextSig(get_dummy_sig());
-        let signatures: HashMap<PublicKey, server::RevaultSignature> =
+        let signatures: BTreeMap<PublicKey, server::RevaultSignature> =
             [(pubkey, sig)].iter().cloned().collect();
 
         // Cleartext signatures
@@ -340,7 +340,7 @@ mod tests {
         roundtrip!(msg2);
 
         // No signatures
-        let signatures = HashMap::new();
+        let signatures = BTreeMap::new();
         let msg3 = server::Sigs { signatures };
         roundtrip!(msg3);
     }

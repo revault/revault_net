@@ -30,6 +30,7 @@ impl KKTransport {
         my_noise_privkey: NoisePrivKey,
         their_noise_pubkey: NoisePubKey,
     ) -> Result<KKTransport, Error> {
+        // TODO: retry timeout
         let mut stream = TcpStream::connect(addr)
             .map_err(|e| Error::Transport(format!("TCP connection failed: {:?}", e)))?;
 
