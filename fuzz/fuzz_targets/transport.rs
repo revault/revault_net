@@ -27,7 +27,7 @@ fn kk_client_server(data: &[u8]) {
     let msg_sent = data.to_vec();
 
     thread::spawn(move || {
-        let mut cli_channel = KKTransport::connect(addr, INIT_PRIVKEY, RESP_PUBKEY)
+        let mut cli_channel = KKTransport::connect(addr, &INIT_PRIVKEY, &RESP_PUBKEY)
             .expect("Client channel connecting");
         cli_channel.write(&msg_sent).expect("Sending test message");
     });

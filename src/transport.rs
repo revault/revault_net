@@ -27,16 +27,15 @@ impl KKTransport {
     /// Connect to server at given address, and enact Noise handshake with given private key.
     pub fn connect<A: ToSocketAddrs>(
         addr: A,
-        my_noise_privkey: NoisePrivKey,
-        their_noise_pubkey: NoisePubKey,
+        my_noise_privkey: &NoisePrivKey,
+        their_noise_pubkey: &NoisePubKey,
     ) -> Result<KKTransport, Error> {
         // TODO: retry timeout
         let mut stream = TcpStream::connect(addr)
             .map_err(|e| Error::Transport(format!("TCP connection failed: {:?}", e)))?;
 
-        let (cli_act_1, msg_1) =
-            KKHandshakeActOne::initiator(&my_noise_privkey, &their_noise_pubkey)
-                .map_err(|e| Error::Noise(format!("Failed to initiate act 1: {:?}", e)))?;
+        let (cli_act_1, msg_1) = KKHandshakeActOne::initiator(my_noise_privkey, their_noise_pubkey)
+            .map_err(|e| Error::Noise(format!("Failed to initiate act 1: {:?}", e)))?;
 
         // write msg_1 to stream (e, es, ss)
         stream.write_all(&msg_1.0).map_err(|e| {
@@ -182,8 +181,9 @@ mod tests {
             let my_noise_privkey = NoisePrivKey(client_keypair.private[..].try_into().unwrap());
             let their_noise_pubkey = server_pubkey;
 
-            let mut cli_channel = KKTransport::connect(addr, my_noise_privkey, their_noise_pubkey)
-                .expect("Client channel connecting");
+            let mut cli_channel =
+                KKTransport::connect(addr, &my_noise_privkey, &their_noise_pubkey)
+                    .expect("Client channel connecting");
             let msg = "Test message".as_bytes();
             cli_channel.write(&msg).expect("Sending test message");
             msg
