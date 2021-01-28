@@ -62,7 +62,7 @@ pub mod server {
         /// An encryped (b64) signature
         EncryptedSig {
             /// Curve25519 public key used to encrypt the signature
-            pubkey: Vec<u8>,
+            encryption_key: sodiumoxide::crypto::box_::PublicKey,
             /// Encrypted Bitcoin ECDSA signature
             encrypted_signature: Vec<u8>,
         },
@@ -285,6 +285,12 @@ mod tests {
         roundtrip!(msg);
     }
 
+    fn dummy_encrypt_sig(sig: &[u8]) -> Vec<u8> {
+        let (dum_pk, dum_sk) = sodiumoxide::crypto::box_::gen_keypair();
+        let nonce = sodiumoxide::crypto::box_::gen_nonce();
+        sodiumoxide::crypto::box_::seal(sig, &nonce, &dum_pk, &dum_sk)
+    }
+
     #[test]
     fn serde_server_sig() {
         let pubkey = get_dummy_pubkey();
@@ -300,9 +306,11 @@ mod tests {
         roundtrip!(msg1);
 
         // Encrypted signature
+        let encrypted_signature = dummy_encrypt_sig(&sig.serialize_der());
+        let (encryption_key, _) = sodiumoxide::crypto::box_::gen_keypair();
         let signature = server::RevaultSignature::EncryptedSig {
-            pubkey: Vec::new(),
-            encrypted_signature: Vec::new(),
+            encryption_key,
+            encrypted_signature,
         };
         let msg2 = server::FromStakeholder::Sig(server::Sig {
             pubkey,
@@ -322,18 +330,23 @@ mod tests {
     #[test]
     fn serde_server_sigs() {
         let pubkey: PublicKey = get_dummy_pubkey();
-        let sig = server::RevaultSignature::PlaintextSig(get_dummy_sig());
+        let sig = get_dummy_sig();
         let signatures: BTreeMap<PublicKey, server::RevaultSignature> =
-            [(pubkey, sig)].iter().cloned().collect();
+            [(pubkey, server::RevaultSignature::PlaintextSig(sig))]
+                .iter()
+                .cloned()
+                .collect();
 
         // Cleartext signatures
         let msg1 = server::Sigs { signatures };
         roundtrip!(msg1);
 
         // Encrypted signatures
+        let encrypted_signature = dummy_encrypt_sig(&sig.serialize_der());
+        let (encryption_key, _) = sodiumoxide::crypto::box_::gen_keypair();
         let encrypted_signature = server::RevaultSignature::EncryptedSig {
-            pubkey: Vec::new(),
-            encrypted_signature: Vec::new(),
+            encryption_key,
+            encrypted_signature,
         };
         let signatures = [(pubkey, encrypted_signature)].iter().cloned().collect();
         let msg2 = server::Sigs { signatures };
