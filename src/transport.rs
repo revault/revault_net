@@ -114,7 +114,7 @@ impl KKTransport {
         // Note that read_to_end() will read thousands of bytes for whatever reason
         // so we emulate it here.
         loop {
-            match self.stream.read(&mut encrypted_msg) {
+            match self.stream.read(&mut encrypted_msg[bytes_read..]) {
                 Ok(0) => break,
                 Ok(n) => {
                     bytes_read += n;
