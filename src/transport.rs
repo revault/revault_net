@@ -8,11 +8,11 @@ use crate::{
     error::Error,
     noise::{
         KKChannel, KKHandshakeActOne, KKHandshakeActTwo, KKMessageActOne, KKMessageActTwo,
-        NoiseEncryptedMessage, NoisePrivKey, NoisePubKey, KK_MSG_1_SIZE, KK_MSG_2_SIZE,
-        NOISE_MESSAGE_MAX_SIZE,
+        NoiseEncryptedHeader, NoiseEncryptedMessage, NoisePrivKey, NoisePubKey, KK_MSG_1_SIZE,
+        KK_MSG_2_SIZE, NOISE_MESSAGE_HEADER_SIZE,
     },
 };
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 
 /// Wrapper type for a TcpStream and KKChannel that automatically enforces authenticated and
@@ -105,38 +105,24 @@ impl KKTransport {
     }
 
     /// Read a message from the other end of the encrypted communication channel.
-    /// Will return on connection interruption. Note that this blocks (without timeout)
-    /// until the socket is closed.
+    /// Will return on connection interruption. Note that this blocks (without timeout!)
     pub fn read(&mut self) -> Result<Vec<u8>, Error> {
-        let mut encrypted_msg = vec![0u8; NOISE_MESSAGE_MAX_SIZE];
-        let mut bytes_read = 0;
+        let mut cypherheader = [0u8; NOISE_MESSAGE_HEADER_SIZE];
+        self.stream
+            .read_exact(&mut cypherheader)
+            // FIXME: use an Error::Io(io::Error)
+            .map_err(|e| Error::Transport(format!("Reading header: {}", e)))?;
+        let msg_len = self
+            .channel
+            .decrypt_header(&NoiseEncryptedHeader(cypherheader))?;
 
-        // Note that read_to_end() will read thousands of bytes for whatever reason
-        // so we emulate it here.
-        loop {
-            match self.stream.read(&mut encrypted_msg[bytes_read..]) {
-                Ok(0) => break,
-                Ok(n) => {
-                    bytes_read += n;
-                    if bytes_read > NOISE_MESSAGE_MAX_SIZE {
-                        // In this case no need to go further, they broke the protocol!
-                        return Err(Error::Transport(format!("Noise message too big.")));
-                    }
-                }
-                Err(e) => match e.kind() {
-                    io::ErrorKind::Interrupted
-                    | io::ErrorKind::ConnectionReset
-                    | io::ErrorKind::ConnectionAborted
-                    | io::ErrorKind::BrokenPipe => return Ok(vec![]),
-                    // That's actually bad
-                    _ => return Err(Error::Transport(format!("Reading from stream: '{}'", e))),
-                },
-            };
-        }
-        encrypted_msg.truncate(bytes_read);
-
-        let encrypted_msg = NoiseEncryptedMessage(encrypted_msg);
-        self.channel.decrypt_message(&encrypted_msg)
+        // Note that `msg_len` cannot be > 65K (2 bytes)
+        let mut cypherbody = vec![0u8; msg_len as usize];
+        self.stream
+            .read_exact(&mut cypherbody)
+            .map_err(|e| Error::Transport(format!("Reading body: {}", e)))?;
+        self.channel
+            .decrypt_message(&NoiseEncryptedMessage(cypherbody))
     }
 
     /// Get the static public key of the peer

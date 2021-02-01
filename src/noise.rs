@@ -18,12 +18,13 @@ pub const KEY_SIZE: usize = 32;
 pub const MAC_SIZE: usize = 16;
 /// Max message size pecified by Noise Protocol Framework
 pub const NOISE_MESSAGE_MAX_SIZE: usize = 65535;
-/// A 64bit integer is used for message length prefix
-pub const LENGTH_PREFIX_SIZE: usize = 8;
+/// Two bytes are used for the message length prefix
+pub const LENGTH_PREFIX_SIZE: usize = 2;
 /// Message header length plus its MAC
-pub const NOISE_MESSAGE_HEADER_SIZE: usize = MAC_SIZE + LENGTH_PREFIX_SIZE;
+pub const NOISE_MESSAGE_HEADER_SIZE: usize = LENGTH_PREFIX_SIZE + MAC_SIZE;
 /// Maximum size of a message before being encrypted; limited by Noise Protocol Framework
-pub const NOISE_PLAINTEXT_MAX_SIZE: usize = NOISE_MESSAGE_MAX_SIZE - NOISE_MESSAGE_HEADER_SIZE;
+pub const NOISE_PLAINTEXT_MAX_SIZE: usize =
+    NOISE_MESSAGE_MAX_SIZE - NOISE_MESSAGE_HEADER_SIZE - MAC_SIZE;
 /// e, es, ss
 pub const KK_MSG_1_SIZE: usize = KEY_SIZE + HANDSHAKE_MESSAGE.len() + MAC_SIZE;
 /// e, ee, se
@@ -193,7 +194,13 @@ impl KKHandshakeActTwo {
     }
 }
 
-/// A cyphertext encrypted with [encrypt_message]
+/// A cypertext encrypted with [encrypt_message] containing the length prefix of
+/// a plaintext message.
+#[derive(Debug, Clone, Copy)]
+pub struct NoiseEncryptedHeader(pub [u8; LENGTH_PREFIX_SIZE + MAC_SIZE]);
+
+/// A cyphertext encrypted with [encrypt_message] containing the body of a Noise
+/// message.
 #[derive(Debug)]
 pub struct NoiseEncryptedMessage(pub Vec<u8>);
 
@@ -201,6 +208,11 @@ pub struct NoiseEncryptedMessage(pub Vec<u8>);
 #[derive(Debug)]
 pub struct KKChannel {
     transport_state: TransportState,
+}
+
+fn encrypted_msg_size(plaintext_size: usize) -> usize {
+    // Length prefix + MAC    ||   Message + MAC
+    NOISE_MESSAGE_HEADER_SIZE + plaintext_size + MAC_SIZE
 }
 
 impl KKChannel {
@@ -214,47 +226,64 @@ impl KKChannel {
         Ok(KKChannel { transport_state })
     }
 
-    /// Use the channel to encrypt a message shorter than [NOISE_MESSAGE_HEADER_SIZE].
-    /// Pre-fixes the message with (big-endian) length field and pads the message with
-    /// 0s before encryption.
+    /// Use the channel to encrypt a message shorter than [NOISE_PLAINTEXT_MAX_SIZE].
+    /// Pre-fixes the message with a 2-bytes big-endian length field MAC'ed on its own to permit
+    /// incremental reads.
     /// On success, returns the ciphertext.
     pub fn encrypt_message(&mut self, message: &[u8]) -> Result<NoiseEncryptedMessage, Error> {
         if message.len() > NOISE_PLAINTEXT_MAX_SIZE {
             return Err(Error::Noise("Message is too large to encrypt".to_string()));
         }
-        let mut output = vec![0u8; NOISE_MESSAGE_HEADER_SIZE + message.len()];
+        let mut output = vec![0u8; encrypted_msg_size(message.len())];
 
-        let message_len: usize = MAC_SIZE + message.len();
-        let mut prefixed_message = message_len.to_be_bytes().to_vec();
-        prefixed_message.extend_from_slice(message);
+        let message_len: u16 = (MAC_SIZE + message.len())
+            .try_into()
+            .expect("We just checked it was < NOISE_PLAINTEXT_MAX_SIZE");
+        let prefix = message_len.to_be_bytes().to_vec();
         self.transport_state
-            .write_message(&prefixed_message, &mut output)
+            .write_message(&prefix, &mut output[..NOISE_MESSAGE_HEADER_SIZE])
+            .map_err(|e| Error::Noise(format!("Header encryption failed: {:?}", e)))?;
+
+        self.transport_state
+            .write_message(&message, &mut output[NOISE_MESSAGE_HEADER_SIZE..])
             .map_err(|e| Error::Noise(format!("Header encryption failed: {:?}", e)))?;
 
         Ok(NoiseEncryptedMessage(output))
     }
 
-    /// Get plaintext bytes from a valid Noise-encrypted message
+    /// Get the size of the message following this header
+    pub fn decrypt_header(&mut self, header: &NoiseEncryptedHeader) -> Result<u16, Error> {
+        let mut buf = [0u8; NOISE_MESSAGE_HEADER_SIZE];
+        self.transport_state
+            .read_message(&header.0, &mut buf)
+            // FIXME: use an Error::Noise(SnowError here)
+            .map_err(|e| Error::Noise(format!("Failed to decrypt message: {:?}", e)))?;
+
+        let len_be: [u8; 2] = buf[..NOISE_MESSAGE_HEADER_SIZE - MAC_SIZE]
+            .try_into()
+            .expect("NOISE_MESSAGE_HEADER_SIZE - MAC_SIZE == LENGTH_PREFIX_SIZE");
+        Ok(u16::from_be_bytes(len_be))
+    }
+
+    /// Get plaintext bytes from a Noise-encrypted message
     pub fn decrypt_message(&mut self, message: &NoiseEncryptedMessage) -> Result<Vec<u8>, Error> {
         // TODO: could be in NoiseEncryptedMessage's constructor?
         if message.0.len() > NOISE_MESSAGE_MAX_SIZE {
             return Err(Error::Noise("Message is too large to decrypt".to_string()));
         }
-        if message.0.len() < NOISE_MESSAGE_HEADER_SIZE {
+        if message.0.len() < MAC_SIZE {
             return Err(Error::Noise("Message is too small to decrypt".to_string()));
         }
-        let mut output = vec![0u8; message.0.len()];
+        let mut plaintext = vec![0u8; message.0.len()];
 
         self.transport_state
-            .read_message(&message.0, &mut output)
+            .read_message(&message.0, &mut plaintext)
             .map_err(|e| Error::Noise(format!("Failed to decrypt message: {:?}", e)))?;
 
-        // We read the length prefix and the MAC, but we don't care about any of both (we use a
-        // vec, and the MAC is checked by Snow).
-        // TODO: bench this against truncating and reverse-then-pop-then-reverse
-        Ok(output
-            .drain(LENGTH_PREFIX_SIZE..output.len() - MAC_SIZE)
-            .collect())
+        // We read the MAC, but caller doesn't care about it
+        // FIXME: add a test for invalid MAC getting refused
+        plaintext.truncate(plaintext.len() - MAC_SIZE);
+        Ok(plaintext)
     }
 
     /// Get the static public key of the peer
@@ -276,13 +305,12 @@ impl KKChannel {
 pub mod tests {
     use crate::noise::{
         KKChannel, KKHandshakeActOne, KKHandshakeActTwo, KKMessageActOne, KKMessageActTwo,
-        NoiseEncryptedMessage, NoisePrivKey, NoisePubKey, KEY_SIZE, KK_MSG_1_SIZE, KK_MSG_2_SIZE,
-        NOISE_MESSAGE_HEADER_SIZE, NOISE_MESSAGE_MAX_SIZE, NOISE_PLAINTEXT_MAX_SIZE,
+        NoiseEncryptedHeader, NoiseEncryptedMessage, NoisePrivKey, NoisePubKey, KEY_SIZE,
+        KK_MSG_1_SIZE, KK_MSG_2_SIZE, MAC_SIZE, NOISE_MESSAGE_HEADER_SIZE, NOISE_MESSAGE_MAX_SIZE,
+        NOISE_PLAINTEXT_MAX_SIZE,
     };
-    use std::str::FromStr;
+    use std::{convert::TryInto, str::FromStr};
 
-    /// Revault must specify the SodiumResolver to use sodiumoxide as the cryptography provider
-    /// when generating a static key pair for secure communication.
     pub fn generate_keypair() -> (NoisePrivKey, NoisePubKey) {
         let mut noise_privkey = NoisePrivKey([0u8; KEY_SIZE]);
 
@@ -296,7 +324,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_kk_handshake_encrypted_transport() {
+    fn test_bidirectional_roundtrip() {
         let (initiator_privkey, initiator_pubkey) = generate_keypair();
         let (responder_privkey, responder_pubkey) = generate_keypair();
 
@@ -317,13 +345,38 @@ pub mod tests {
         // client encrypts message for server
         let msg = "Hello".as_bytes();
         let encrypted_msg = client_channel.encrypt_message(&msg).unwrap();
-        let decrypted_msg = server_channel.decrypt_message(&encrypted_msg).unwrap();
+        assert_eq!(
+            encrypted_msg.0.len(),
+            msg.len() + NOISE_MESSAGE_HEADER_SIZE + MAC_SIZE
+        );
+        let (header, body) = (
+            &encrypted_msg.0[..NOISE_MESSAGE_HEADER_SIZE],
+            &encrypted_msg.0[NOISE_MESSAGE_HEADER_SIZE..],
+        );
+        eprintln!("{:x?}", header);
+        let msg_len = server_channel
+            .decrypt_header(&NoiseEncryptedHeader(header.try_into().unwrap()))
+            .unwrap();
+        assert_eq!(msg_len as usize, msg.len() + MAC_SIZE);
+        let decrypted_msg = server_channel
+            .decrypt_message(&NoiseEncryptedMessage(body.to_vec()))
+            .unwrap();
         assert_eq!(msg.to_vec(), decrypted_msg);
 
         // server encrypts message for client
         let msg = "Goodbye".as_bytes();
         let encrypted_msg = server_channel.encrypt_message(&msg).unwrap();
-        let decrypted_msg = client_channel.decrypt_message(&encrypted_msg).unwrap();
+        let (header, body) = (
+            &encrypted_msg.0[..NOISE_MESSAGE_HEADER_SIZE],
+            &encrypted_msg.0[NOISE_MESSAGE_HEADER_SIZE..],
+        );
+        let msg_len = client_channel
+            .decrypt_header(&NoiseEncryptedHeader(header.try_into().unwrap()))
+            .unwrap();
+        assert_eq!(msg_len as usize, msg.len() + MAC_SIZE);
+        let decrypted_msg = client_channel
+            .decrypt_message(&NoiseEncryptedMessage(body.to_vec()))
+            .unwrap();
         assert_eq!(msg.to_vec(), decrypted_msg);
     }
 
