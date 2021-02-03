@@ -1,6 +1,7 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 use revault_net::noise::*;
+use std::convert::TryInto;
 
 const INIT_PRIVKEY: NoisePrivKey = NoisePrivKey([
     16, 85, 69, 127, 155, 247, 36, 200, 184, 156, 230, 255, 16, 125, 113, 4, 95, 78, 76, 188, 58,
@@ -34,23 +35,44 @@ fn kk_channels() -> (KKChannel, KKChannel) {
 }
 
 fn kk_roundtrip(client_channel: &mut KKChannel, server_channel: &mut KKChannel, data: &[u8]) {
-    let cypher = client_channel.encrypt_message(&data).unwrap();
-    server_channel.decrypt_message(&cypher).unwrap();
+    // Client --> Server
+    let cypher = client_channel.encrypt_message(data).unwrap();
+    let header = NoiseEncryptedHeader(cypher.0[..NOISE_MESSAGE_HEADER_SIZE].try_into().unwrap());
+    let body = NoiseEncryptedMessage(cypher.0[NOISE_MESSAGE_HEADER_SIZE..].to_vec());
 
-    let cypher = server_channel.encrypt_message(&data).unwrap();
-    client_channel.decrypt_message(&cypher).unwrap();
+    let length = server_channel.decrypt_header(&header).unwrap();
+    assert_eq!(body.0.len(), length as usize);
+    let plaintext = server_channel.decrypt_message(&body).unwrap();
+    assert_eq!(&plaintext, data);
+
+    // Server --> Client
+    let cypher = server_channel.encrypt_message(data).unwrap();
+    let header = NoiseEncryptedHeader(cypher.0[..NOISE_MESSAGE_HEADER_SIZE].try_into().unwrap());
+    let body = NoiseEncryptedMessage(cypher.0[NOISE_MESSAGE_HEADER_SIZE..].to_vec());
+
+    let length = client_channel.decrypt_header(&header).unwrap();
+    assert_eq!(body.0.len(), length as usize);
+    let plaintext = client_channel.decrypt_message(&body).unwrap();
+    assert_eq!(&plaintext, data);
 }
 
 fuzz_target!(|data: &[u8]| {
     let (mut kk_client, mut kk_server) = kk_channels();
 
-    if data.len() < NOISE_MESSAGE_MAX_SIZE {
-        kk_roundtrip(&mut kk_client, &mut kk_server, data);
+    // Encrypt `data` then decrypt it
+    kk_roundtrip(&mut kk_client, &mut kk_server, data);
 
+    // The opposite: treat `data` as encrypted data
+    if data.len() < NOISE_MESSAGE_MAX_SIZE {
         // Don't unwrap: they are surely invalid. But be sure we don't crash while
         // handling them.
         #[allow(unused)]
         if data.len() > NOISE_MESSAGE_HEADER_SIZE {
+            let header =
+                NoiseEncryptedHeader(data[..NOISE_MESSAGE_HEADER_SIZE].try_into().unwrap());
+            kk_client.decrypt_header(&header);
+            kk_server.decrypt_header(&header);
+
             let data = NoiseEncryptedMessage(data.to_vec());
             kk_client.decrypt_message(&data);
             kk_server.decrypt_message(&data);
