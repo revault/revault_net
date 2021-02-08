@@ -13,7 +13,8 @@ use crate::{
     },
 };
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::time::Duration;
 
 /// Wrapper type for a TcpStream and KKChannel that automatically enforces authenticated and
 /// encrypted channels when communicating
@@ -25,13 +26,12 @@ pub struct KKTransport {
 
 impl KKTransport {
     /// Connect to server at given address, and enact Noise handshake with given private key.
-    pub fn connect<A: ToSocketAddrs>(
-        addr: A,
+    pub fn connect(
+        addr: SocketAddr,
         my_noise_privkey: &NoisePrivKey,
         their_noise_pubkey: &NoisePubKey,
     ) -> Result<KKTransport, Error> {
-        // TODO: retry timeout
-        let mut stream = TcpStream::connect(addr)
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))
             .map_err(|e| Error::Transport(format!("TCP connection failed: {:?}", e)))?;
 
         let (cli_act_1, msg_1) = KKHandshakeActOne::initiator(my_noise_privkey, their_noise_pubkey)
