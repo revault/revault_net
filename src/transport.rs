@@ -31,29 +31,21 @@ impl KKTransport {
         my_noise_privkey: &NoisePrivKey,
         their_noise_pubkey: &NoisePubKey,
     ) -> Result<KKTransport, Error> {
-        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))
-            .map_err(|e| Error::Transport(format!("TCP connection failed: {:?}", e)))?;
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
 
-        let (cli_act_1, msg_1) = KKHandshakeActOne::initiator(my_noise_privkey, their_noise_pubkey)
-            .map_err(|e| Error::Noise(format!("Failed to initiate act 1: {:?}", e)))?;
+        let (cli_act_1, msg_1) =
+            KKHandshakeActOne::initiator(my_noise_privkey, their_noise_pubkey)?;
 
         // write msg_1 to stream (e, es, ss)
-        stream.write_all(&msg_1.0).map_err(|e| {
-            Error::Transport(format!("Failed to write message 1 to TcpStream: {:?}", e))
-        })?;
+        stream.write_all(&msg_1.0)?;
 
         // read msg_2 from stream (e, ee, se)
         let mut msg_2 = [0u8; KK_MSG_2_SIZE];
-        stream.read_exact(&mut msg_2).map_err(|e| {
-            Error::Transport(format!("Failed to read message 2 from TcpStream: {:?}", e))
-        })?;
+        stream.read_exact(&mut msg_2)?;
 
         let msg_act_2 = KKMessageActTwo(msg_2);
-        let cli_act_2 = KKHandshakeActTwo::initiator(cli_act_1, &msg_act_2)
-            .map_err(|e| Error::Noise(format!("Failed to initiate act 2: {:?}", e)))?;
-        let channel = KKChannel::from_handshake(cli_act_2)
-            .map_err(|e| Error::Noise(format!("Failed to construct KKChannel: {:?}", e)))?;
-
+        let cli_act_2 = KKHandshakeActTwo::initiator(cli_act_1, &msg_act_2)?;
+        let channel = KKChannel::from_handshake(cli_act_2)?;
         Ok(KKTransport { stream, channel })
     }
 
@@ -65,30 +57,21 @@ impl KKTransport {
         my_noise_privkey: &NoisePrivKey,
         their_possible_pubkeys: &[NoisePubKey],
     ) -> Result<KKTransport, Error> {
-        let (mut stream, _) = listener
-            .accept()
-            .map_err(|e| Error::Transport(format!("TCP accept failed: {:?}", e)))?;
+        let (mut stream, _) = listener.accept().map_err(|e| Error::Transport(e))?;
 
         // read msg_1 from stream
         let mut msg_1 = [0u8; KK_MSG_1_SIZE];
         // FIXME: timeout?
-        stream.read_exact(&mut msg_1).map_err(|e| {
-            Error::Transport(format!("Failed to read message 1 from TcpStream: {:?}", e))
-        })?;
+        stream.read_exact(&mut msg_1)?;
         let msg_act_1 = KKMessageActOne(msg_1);
 
         let serv_act_1 =
-            KKHandshakeActOne::responder(&my_noise_privkey, their_possible_pubkeys, &msg_act_1)
-                .map_err(|e| Error::Noise(format!("Failed to respond in act 1: {:?}", e)))?;
-        let (serv_act_2, msg_2) = KKHandshakeActTwo::responder(serv_act_1)
-            .map_err(|e| Error::Noise(format!("Failed to respond in act 2: {:?}", e)))?;
-        let channel = KKChannel::from_handshake(serv_act_2)
-            .map_err(|e| Error::Noise(format!("Failed to construct KXChannel: {:?}", e)))?;
+            KKHandshakeActOne::responder(&my_noise_privkey, their_possible_pubkeys, &msg_act_1)?;
+        let (serv_act_2, msg_2) = KKHandshakeActTwo::responder(serv_act_1)?;
+        let channel = KKChannel::from_handshake(serv_act_2)?;
 
         // write msg_2 to stream
-        stream.write_all(&msg_2.0).map_err(|e| {
-            Error::Transport(format!("Failed to write message 2 to TcpStream: {:?}", e))
-        })?;
+        stream.write_all(&msg_2.0)?;
 
         Ok(KKTransport { stream, channel })
     }
@@ -96,31 +79,23 @@ impl KKTransport {
     /// Write a message to the other end of the encrypted communication channel.
     pub fn write(&mut self, msg: &[u8]) -> Result<(), Error> {
         let encrypted_msg = self.channel.encrypt_message(msg)?.0;
-        self.stream.write_all(&encrypted_msg).map_err(|e| {
-            Error::Transport(format!(
-                "Failed to send encrypted message with TcpStream: {:?}",
-                e
-            ))
-        })
+        self.stream
+            .write_all(&encrypted_msg)
+            .map_err(|e| Error::Transport(e))
     }
 
     /// Read a message from the other end of the encrypted communication channel.
     /// Will return on connection interruption. Note that this blocks (without timeout!)
     pub fn read(&mut self) -> Result<Vec<u8>, Error> {
         let mut cypherheader = [0u8; NOISE_MESSAGE_HEADER_SIZE];
-        self.stream
-            .read_exact(&mut cypherheader)
-            // FIXME: use an Error::Io(io::Error)
-            .map_err(|e| Error::Transport(format!("Reading header: {}", e)))?;
+        self.stream.read_exact(&mut cypherheader)?;
         let msg_len = self
             .channel
             .decrypt_header(&NoiseEncryptedHeader(cypherheader))?;
 
         // Note that `msg_len` cannot be > 65K (2 bytes)
         let mut cypherbody = vec![0u8; msg_len as usize];
-        self.stream
-            .read_exact(&mut cypherbody)
-            .map_err(|e| Error::Transport(format!("Reading body: {}", e)))?;
+        self.stream.read_exact(&mut cypherbody)?;
         self.channel
             .decrypt_message(&NoiseEncryptedMessage(cypherbody))
     }
@@ -134,7 +109,6 @@ impl KKTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::Error;
     use snow::{resolvers::SodiumResolver, Builder, Keypair};
     use std::convert::TryInto;
     use std::thread;
@@ -142,10 +116,7 @@ mod tests {
     /// Revault must specify the SodiumResolver to use sodiumoxide as the cryptography provider
     /// when generating a static key pair for secure communication.
     pub fn generate_keypair() -> Keypair {
-        let noise_params = "Noise_KK_25519_ChaChaPoly_SHA256"
-            .parse()
-            .map_err(|e| Error::Noise(format!("Invalid Noise Pattern: {}", e)))
-            .unwrap();
+        let noise_params = "Noise_KK_25519_ChaChaPoly_SHA256".parse().unwrap();
         Builder::with_resolver(noise_params, Box::new(SodiumResolver::default()))
             .generate_keypair()
             .unwrap()

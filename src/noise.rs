@@ -43,7 +43,7 @@ impl FromStr for NoisePubKey {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self(
-            FromHex::from_hex(s).map_err(|e| Error::Noise(e.to_string()))?,
+            FromHex::from_hex(s).map_err(|e| Error::Other(e.to_string()))?,
         ))
     }
 }
@@ -67,7 +67,6 @@ pub struct KKHandshakeActOne {
 }
 
 /// Message sent during the first round of the KK handshake (e, es, ss)
-#[derive(Debug)]
 pub struct KKMessageActOne(pub(crate) [u8; KK_MSG_1_SIZE]);
 
 impl KKHandshakeActOne {
@@ -86,19 +85,11 @@ impl KKHandshakeActOne {
         let mut state = builder
             .local_private_key(&my_privkey.0)
             .remote_public_key(&their_pubkey.0)
-            .build_initiator()
-            .map_err(|e| Error::Noise(format!("Failed to build state for initiator: {:?}", e)))?;
+            .build_initiator()?;
 
         // Write the first message
         let mut msg = [0u8; KK_MSG_1_SIZE];
-        state
-            .write_message(HANDSHAKE_MESSAGE, &mut msg)
-            .map_err(|e| {
-                Error::Noise(format!(
-                    "Failed to write first message for initiator: {:?}",
-                    e
-                ))
-            })?;
+        state.write_message(HANDSHAKE_MESSAGE, &mut msg)?;
 
         Ok((KKHandshakeActOne { state }, KKMessageActOne(msg)))
     }
@@ -121,27 +112,22 @@ impl KKHandshakeActOne {
             let mut state = builder
                 .local_private_key(&my_privkey.0)
                 .remote_public_key(&their_pubkey.0)
-                .build_responder()
-                .map_err(|e| {
-                    Error::Noise(format!("Failed to build state for responder: {:?}", e))
-                })?;
+                .build_responder()?;
 
             let mut msg = [0u8; KK_MSG_1_SIZE];
             if state.read_message(&message.0, &mut msg).is_err() {
                 continue;
             }
             if &msg[..HANDSHAKE_MESSAGE.len()] != HANDSHAKE_MESSAGE {
-                return Err(Error::Noise(format!(
-                    "Wrong handshake message. Expected '{:x?}' got '{:x?}'.",
-                    HANDSHAKE_MESSAGE,
-                    &msg[..HANDSHAKE_MESSAGE.len()]
-                )));
+                return Err(Error::from(
+                    snow::error::PatternProblem::UnsupportedHandshakeType,
+                ));
             }
 
             return Ok(KKHandshakeActOne { state });
         }
 
-        Err(Error::Noise("No matching pubkey".to_string()))
+        Err(Error::from(snow::error::Prerequisite::RemotePublicKey))
     }
 }
 
@@ -153,7 +139,6 @@ pub struct KKHandshakeActTwo {
 }
 
 /// Content of the message from the final round of the KK handshake (e, ee, se)
-#[derive(Debug)]
 pub struct KKMessageActTwo(pub(crate) [u8; KK_MSG_2_SIZE]);
 
 impl KKHandshakeActTwo {
@@ -164,12 +149,7 @@ impl KKHandshakeActTwo {
     ) -> Result<KKHandshakeActTwo, Error> {
         // In handshake mode we don't actually care about the message
         let mut _m = [0u8; KK_MSG_2_SIZE];
-        handshake
-            .state
-            .read_message(&message.0, &mut _m)
-            .map_err(|e| {
-                Error::Noise(format!("Initiator failed to read second message: {:?}", e))
-            })?;
+        handshake.state.read_message(&message.0, &mut _m)?;
 
         Ok(KKHandshakeActTwo {
             state: handshake.state,
@@ -181,9 +161,7 @@ impl KKHandshakeActTwo {
         mut handshake: KKHandshakeActOne,
     ) -> Result<(KKHandshakeActTwo, KKMessageActTwo), Error> {
         let mut msg = [0u8; KK_MSG_2_SIZE];
-        handshake.state.write_message(&[], &mut msg).map_err(|e| {
-            Error::Noise(format!("Responder failed to write second message: {:?}", e))
-        })?;
+        handshake.state.write_message(&[], &mut msg)?;
 
         Ok((
             KKHandshakeActTwo {
@@ -218,10 +196,7 @@ fn encrypted_msg_size(plaintext_size: usize) -> usize {
 impl KKChannel {
     /// Constructs the KK Noise channel from a final stage KK handshake
     pub fn from_handshake(state: KKHandshakeActTwo) -> Result<KKChannel, Error> {
-        let transport_state = state
-            .state
-            .into_transport_mode()
-            .map_err(|e| Error::Noise(format!("Failed to enter transport mode: {:?}", e)))?;
+        let transport_state = state.state.into_transport_mode()?;
 
         Ok(KKChannel { transport_state })
     }
@@ -232,7 +207,7 @@ impl KKChannel {
     /// On success, returns the ciphertext.
     pub fn encrypt_message(&mut self, message: &[u8]) -> Result<NoiseEncryptedMessage, Error> {
         if message.len() > NOISE_PLAINTEXT_MAX_SIZE {
-            return Err(Error::Noise("Message is too large to encrypt".to_string()));
+            return Err(Error::from(snow::Error::Input));
         }
         let mut output = vec![0u8; encrypted_msg_size(message.len())];
 
@@ -241,12 +216,10 @@ impl KKChannel {
             .expect("We just checked it was < NOISE_PLAINTEXT_MAX_SIZE");
         let prefix = message_len.to_be_bytes().to_vec();
         self.transport_state
-            .write_message(&prefix, &mut output[..NOISE_MESSAGE_HEADER_SIZE])
-            .map_err(|e| Error::Noise(format!("Header encryption failed: {:?}", e)))?;
+            .write_message(&prefix, &mut output[..NOISE_MESSAGE_HEADER_SIZE])?;
 
         self.transport_state
-            .write_message(&message, &mut output[NOISE_MESSAGE_HEADER_SIZE..])
-            .map_err(|e| Error::Noise(format!("Header encryption failed: {:?}", e)))?;
+            .write_message(&message, &mut output[NOISE_MESSAGE_HEADER_SIZE..])?;
 
         Ok(NoiseEncryptedMessage(output))
     }
@@ -254,10 +227,7 @@ impl KKChannel {
     /// Get the size of the message following this header
     pub fn decrypt_header(&mut self, header: &NoiseEncryptedHeader) -> Result<u16, Error> {
         let mut buf = [0u8; NOISE_MESSAGE_HEADER_SIZE];
-        self.transport_state
-            .read_message(&header.0, &mut buf)
-            // FIXME: use an Error::Noise(SnowError here)
-            .map_err(|e| Error::Noise(format!("Failed to decrypt message: {:?}", e)))?;
+        self.transport_state.read_message(&header.0, &mut buf)?;
 
         let len_be: [u8; 2] = buf[..NOISE_MESSAGE_HEADER_SIZE - MAC_SIZE]
             .try_into()
@@ -269,16 +239,15 @@ impl KKChannel {
     pub fn decrypt_message(&mut self, message: &NoiseEncryptedMessage) -> Result<Vec<u8>, Error> {
         // TODO: could be in NoiseEncryptedMessage's constructor?
         if message.0.len() > NOISE_MESSAGE_MAX_SIZE {
-            return Err(Error::Noise("Message is too large to decrypt".to_string()));
+            return Err(Error::from(snow::Error::Input));
         }
         if message.0.len() < MAC_SIZE {
-            return Err(Error::Noise("Message is too small to decrypt".to_string()));
+            return Err(Error::from(snow::Error::Input));
         }
         let mut plaintext = vec![0u8; message.0.len()];
 
         self.transport_state
-            .read_message(&message.0, &mut plaintext)
-            .map_err(|e| Error::Noise(format!("Failed to decrypt message: {:?}", e)))?;
+            .read_message(&message.0, &mut plaintext)?;
 
         // We read the MAC, but caller doesn't care about it
         // FIXME: add a test for invalid MAC getting refused
