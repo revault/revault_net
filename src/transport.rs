@@ -12,9 +12,9 @@ use crate::{
         KK_MSG_2_SIZE, NOISE_MESSAGE_HEADER_SIZE,
     },
 };
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::time::Duration;
+use std::{thread, time::Duration};
 
 /// Wrapper type for a TcpStream and KKChannel that automatically enforces authenticated and
 /// encrypted channels when communicating
@@ -61,7 +61,6 @@ impl KKTransport {
 
         // read msg_1 from stream
         let mut msg_1 = [0u8; KK_MSG_1_SIZE];
-        // FIXME: timeout?
         stream.read_exact(&mut msg_1)?;
         let msg_act_1 = KKMessageActOne(msg_1);
 
@@ -85,8 +84,7 @@ impl KKTransport {
     }
 
     /// Read a message from the other end of the encrypted communication channel.
-    /// Will return on connection interruption. Note that this blocks (without timeout!)
-    pub fn read(&mut self) -> Result<Vec<u8>, Error> {
+    fn _read(&mut self) -> Result<Vec<u8>, Error> {
         let mut cypherheader = [0u8; NOISE_MESSAGE_HEADER_SIZE];
         self.stream.read_exact(&mut cypherheader)?;
         let msg_len = self
@@ -103,6 +101,33 @@ impl KKTransport {
     /// Get the static public key of the peer
     pub fn remote_static(&self) -> NoisePubKey {
         self.channel.remote_static()
+    }
+
+    /// Read a message from the other end of the encrypted communication channel.
+    /// Will recover from certain types of errors, those for which no bytes are
+    /// read from the stream, by retrying up to 10 times with a 1s sleep between
+    /// attempts. After 10 attempts, or an unrecoverable error, will return an
+    /// error.  
+    pub fn read(&mut self) -> Result<Vec<u8>, Error> {
+        let mut attempts = 0;
+        loop {
+            match self._read() {
+                Ok(msg) => return Ok(msg),
+                Err(error) => match error {
+                    e if attempts == 5 => return Err(e),
+                    Error::Transport(e) => match e.kind() {
+                        ErrorKind::UnexpectedEof => return Err(Error::Transport(e)),
+                        ErrorKind::Interrupted => return Err(Error::Transport(e)),
+                        _ => {
+                            thread::sleep(Duration::from_secs(1));
+                            continue;
+                        }
+                    },
+                    e => e,
+                },
+            };
+            attempts += 1;
+        }
     }
 }
 
