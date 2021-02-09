@@ -75,12 +75,28 @@ impl KKTransport {
         Ok(KKTransport { stream, channel })
     }
 
-    /// Write a message to the other end of the encrypted communication channel.
+    /// Write a message to the other end of the encrypted communication channel. Attempts
+    /// to recover from certain kinds of error.
     pub fn write(&mut self, msg: &[u8]) -> Result<(), Error> {
         let encrypted_msg = self.channel.encrypt_message(msg)?.0;
-        self.stream
-            .write_all(&encrypted_msg)
-            .map_err(|e| Error::Transport(e))
+        let mut attempts = 0;
+        loop {
+            match self.stream.write_all(&encrypted_msg) {
+                Ok(n) => return Ok(n),
+                // write_all returns the first error of non-ErrorKind::Interrupted kind that
+                // write returns, in which case no bytes were written to the writer, and can
+                // try again. Here we try up to 5 times.
+                Err(e) => {
+                    attempts += 1;
+                    if attempts == 5 {
+                        return Err(Error::from(e));
+                    } else {
+                        thread::sleep(Duration::from_secs(1));
+                        continue;
+                    }
+                }
+            }
+        }
     }
 
     /// Read a message from the other end of the encrypted communication channel.
@@ -98,13 +114,8 @@ impl KKTransport {
             .decrypt_message(&NoiseEncryptedMessage(cypherbody))
     }
 
-    /// Get the static public key of the peer
-    pub fn remote_static(&self) -> NoisePubKey {
-        self.channel.remote_static()
-    }
-
     /// Read a message from the other end of the encrypted communication channel.
-    /// Will recover from certain types of errors, those for which no bytes are
+    /// Will recover from certain kinds of error, those for which no bytes are
     /// read from the stream, by retrying up to 10 times with a 1s sleep between
     /// attempts. After 10 attempts, or an unrecoverable error, will return an
     /// error.  
@@ -128,6 +139,11 @@ impl KKTransport {
             };
             attempts += 1;
         }
+    }
+
+    /// Get the static public key of the peer
+    pub fn remote_static(&self) -> NoisePubKey {
+        self.channel.remote_static()
     }
 }
 
