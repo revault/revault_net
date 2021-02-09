@@ -10,7 +10,7 @@ use revault_tx::bitcoin::hashes::hex::FromHex;
 use std::{convert::TryInto, str::FromStr};
 
 use snow::{resolvers::SodiumResolver, Builder, HandshakeState, TransportState};
-use sodiumoxide::crypto::scalarmult::curve25519;
+use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::{PublicKey, SecretKey};
 
 /// The size of a key, either public or private, on the Curve25519
 pub const KEY_SIZE: usize = 32;
@@ -32,34 +32,6 @@ pub const KK_MSG_2_SIZE: usize = KEY_SIZE + MAC_SIZE;
 /// Sent for versioning and identification during handshake
 pub const HANDSHAKE_MESSAGE: &[u8] = b"practical_revault_0";
 
-// A Curve25519 public key, abstracted out as a "Noise pubkey" for callers
-// who don't need to know about the crypto parameters.
-/// A static Noise public key
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub struct NoisePubKey(pub [u8; KEY_SIZE]);
-
-impl FromStr for NoisePubKey {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self(
-            FromHex::from_hex(s).map_err(|e| Error::Other(e.to_string()))?,
-        ))
-    }
-}
-
-/// A static Noise private key
-#[derive(Debug)]
-pub struct NoisePrivKey(pub [u8; KEY_SIZE]);
-
-impl NoisePrivKey {
-    /// Compute the corresponding public key.
-    pub fn pubkey(&self) -> NoisePubKey {
-        let scalar = curve25519::Scalar(self.0);
-        NoisePubKey(curve25519::scalarmult_base(&scalar).0)
-    }
-}
-
 /// First round of the KK handshake
 #[derive(Debug)]
 pub struct KKHandshakeActOne {
@@ -72,8 +44,8 @@ pub struct KKMessageActOne(pub(crate) [u8; KK_MSG_1_SIZE]);
 impl KKHandshakeActOne {
     /// Start the first act of the handshake as an initiator (sharing e, es, ss)
     pub fn initiator(
-        my_privkey: &NoisePrivKey,
-        their_pubkey: &NoisePubKey,
+        my_privkey: &SecretKey,
+        their_pubkey: &PublicKey,
     ) -> Result<(KKHandshakeActOne, KKMessageActOne), Error> {
         // Build the initial initiator state
         let builder = Builder::with_resolver(
@@ -96,8 +68,8 @@ impl KKHandshakeActOne {
 
     /// Start the first act of the handshake as a responder (reading e, es, ss and doing wizardry with it)
     pub fn responder(
-        my_privkey: &NoisePrivKey,
-        their_possible_pubkeys: &[NoisePubKey],
+        my_privkey: &SecretKey,
+        their_possible_pubkeys: &[PublicKey],
         message: &KKMessageActOne,
     ) -> Result<KKHandshakeActOne, Error> {
         // TODO: estimate how inefficient it is.
@@ -256,8 +228,8 @@ impl KKChannel {
     }
 
     /// Get the static public key of the peer
-    pub fn remote_static(&self) -> NoisePubKey {
-        NoisePubKey(
+    pub fn remote_static(&self) -> PublicKey {
+        PublicKey(
             self.transport_state
                 .get_remote_static()
                 .expect(
@@ -274,28 +246,16 @@ impl KKChannel {
 pub mod tests {
     use crate::noise::{
         KKChannel, KKHandshakeActOne, KKHandshakeActTwo, KKMessageActOne, KKMessageActTwo,
-        NoiseEncryptedHeader, NoiseEncryptedMessage, NoisePrivKey, NoisePubKey, KEY_SIZE,
-        KK_MSG_1_SIZE, KK_MSG_2_SIZE, MAC_SIZE, NOISE_MESSAGE_HEADER_SIZE, NOISE_MESSAGE_MAX_SIZE,
-        NOISE_PLAINTEXT_MAX_SIZE,
+        NoiseEncryptedHeader, NoiseEncryptedMessage, KEY_SIZE, KK_MSG_1_SIZE, KK_MSG_2_SIZE,
+        MAC_SIZE, NOISE_MESSAGE_HEADER_SIZE, NOISE_MESSAGE_MAX_SIZE, NOISE_PLAINTEXT_MAX_SIZE,
     };
+    use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::gen_keypair;
     use std::{convert::TryInto, str::FromStr};
-
-    pub fn generate_keypair() -> (NoisePrivKey, NoisePubKey) {
-        let mut noise_privkey = NoisePrivKey([0u8; KEY_SIZE]);
-
-        sodiumoxide::init().expect("Initing libsodium");
-        noise_privkey
-            .0
-            .copy_from_slice(&sodiumoxide::randombytes::randombytes(32));
-
-        let noise_pubkey = noise_privkey.pubkey();
-        (noise_privkey, noise_pubkey)
-    }
 
     #[test]
     fn test_bidirectional_roundtrip() {
-        let (initiator_privkey, initiator_pubkey) = generate_keypair();
-        let (responder_privkey, responder_pubkey) = generate_keypair();
+        let (initiator_pubkey, initiator_privkey) = gen_keypair();
+        let (responder_pubkey, responder_privkey) = gen_keypair();
 
         // client
         let (cli_act_1, msg_1) =
@@ -351,8 +311,8 @@ pub mod tests {
 
     #[test]
     fn test_message_size_limit() {
-        let (initiator_privkey, initiator_pubkey) = generate_keypair();
-        let (responder_privkey, responder_pubkey) = generate_keypair();
+        let (initiator_pubkey, initiator_privkey) = gen_keypair();
+        let (responder_pubkey, responder_privkey) = gen_keypair();
 
         // client
         let (_, msg_1) =
@@ -390,8 +350,8 @@ pub mod tests {
 
     #[test]
     fn test_bad_messages() {
-        let (initiator_privkey, initiator_pubkey) = generate_keypair();
-        let (responder_privkey, responder_pubkey) = generate_keypair();
+        let (initiator_pubkey, initiator_privkey) = gen_keypair();
+        let (responder_pubkey, responder_privkey) = gen_keypair();
 
         // KK handshake fails if messages are badly formed.
         // Without a valid cli_act_2 nor serv_act_2, no KKChannel can be constructed.
@@ -404,11 +364,5 @@ pub mod tests {
 
         let bad_msg = KKMessageActTwo([1u8; KK_MSG_2_SIZE]);
         KKHandshakeActTwo::initiator(cli_act_1, &bad_msg).expect_err("So is this one.");
-    }
-
-    #[test]
-    fn test_pubkey_from_str() {
-        NoisePubKey::from_str("61feafb2db96bf650b496c74c24ce92fa608e271b4092405f3364c9f8466df66")
-            .expect("Parsing an invalid but well-encoded pubkey");
     }
 }
