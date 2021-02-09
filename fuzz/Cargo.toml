@@ -11,6 +11,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.3"
+sodiumoxide = { version = "0.2", features = ["serde"] }
 
 [dependencies.revault_net]
 path = ".."

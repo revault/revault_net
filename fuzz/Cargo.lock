@@ -399,6 +399,7 @@ version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
  "revault_net",
+ "sodiumoxide",
 ]
 
 [[package]]
