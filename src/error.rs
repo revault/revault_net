@@ -9,8 +9,6 @@ pub enum Error {
     Noise(snow::error::Error),
     /// Transport error
     Transport(std::io::Error),
-    /// FIXME: remove this generic error variant
-    Other(String),
 }
 
 impl fmt::Display for Error {
@@ -18,7 +16,6 @@ impl fmt::Display for Error {
         match *self {
             Error::Noise(ref e) => write!(f, "Noise Error: {}", e),
             Error::Transport(ref e) => write!(f, "Transport Error: {}", e),
-            Error::Other(ref e) => write!(f, "Other Error: {}", e),
         }
     }
 }

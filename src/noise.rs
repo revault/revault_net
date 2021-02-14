@@ -5,7 +5,7 @@
 //!
 
 use crate::error::Error;
-use revault_tx::bitcoin::hashes::hex::FromHex;
+use revault_tx::bitcoin::hashes::hex::{Error as HexError, FromHex};
 
 use std::{convert::TryInto, str::FromStr};
 
@@ -39,12 +39,10 @@ pub const HANDSHAKE_MESSAGE: &[u8] = b"practical_revault_0";
 pub struct NoisePubKey(pub [u8; KEY_SIZE]);
 
 impl FromStr for NoisePubKey {
-    type Err = Error;
+    type Err = HexError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self(
-            FromHex::from_hex(s).map_err(|e| Error::Other(e.to_string()))?,
-        ))
+        Ok(Self(FromHex::from_hex(s)?))
     }
 }
 
