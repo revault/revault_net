@@ -117,8 +117,8 @@ impl KKTransport {
 
     /// Read a message from the other end of the encrypted communication channel.
     /// Will recover from certain kinds of error, those for which no bytes are
-    /// read from the stream, by retrying up to 10 times with a 1s sleep between
-    /// attempts. After 10 attempts, or an unrecoverable error, will return an
+    /// read from the stream, by retrying up to 5 times with a 1s sleep between
+    /// attempts. After 5 attempts, or an unrecoverable error, will return an
     /// error.  
     pub fn read(&mut self) -> Result<Vec<u8>, Error> {
         let mut attempts = 0;
@@ -126,7 +126,7 @@ impl KKTransport {
             match self._read() {
                 Ok(msg) => return Ok(msg),
                 Err(error) => match error {
-                    e if attempts == 5 => return Err(e),
+                    e if attempts == 4 => return Err(e),
                     Error::Transport(e) => match e.kind() {
                         ErrorKind::UnexpectedEof => return Err(Error::Transport(e)),
                         ErrorKind::Interrupted => return Err(Error::Transport(e)),
