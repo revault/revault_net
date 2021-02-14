@@ -112,6 +112,7 @@ impl KKTransport {
         self.stream.read_exact(&mut cypherbody)?;
         self.channel
             .decrypt_message(&NoiseEncryptedMessage(cypherbody))
+            .map_err(|e| e.into())
     }
 
     /// Read a message from the other end of the encrypted communication channel.

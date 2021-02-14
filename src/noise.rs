@@ -4,7 +4,7 @@
 //! and use secure communication channels between revault infrastructure machines.
 //!
 
-use crate::error::Error;
+use crate::error::NoiseError;
 use revault_tx::bitcoin::hashes::hex::{Error as HexError, FromHex};
 
 use std::{convert::TryInto, str::FromStr};
@@ -72,7 +72,7 @@ impl KKHandshakeActOne {
     pub fn initiator(
         my_privkey: &NoisePrivKey,
         their_pubkey: &NoisePubKey,
-    ) -> Result<(KKHandshakeActOne, KKMessageActOne), Error> {
+    ) -> Result<(KKHandshakeActOne, KKMessageActOne), NoiseError> {
         // Build the initial initiator state
         let builder = Builder::with_resolver(
             "Noise_KK_25519_ChaChaPoly_SHA256"
@@ -97,7 +97,7 @@ impl KKHandshakeActOne {
         my_privkey: &NoisePrivKey,
         their_possible_pubkeys: &[NoisePubKey],
         message: &KKMessageActOne,
-    ) -> Result<KKHandshakeActOne, Error> {
+    ) -> Result<KKHandshakeActOne, NoiseError> {
         // TODO: estimate how inefficient it is.
         for their_pubkey in their_possible_pubkeys {
             // Build the initial responder state
@@ -117,15 +117,13 @@ impl KKHandshakeActOne {
                 continue;
             }
             if &msg[..HANDSHAKE_MESSAGE.len()] != HANDSHAKE_MESSAGE {
-                return Err(Error::from(
-                    snow::error::PatternProblem::UnsupportedHandshakeType,
-                ));
+                return Err(NoiseError::BadHandshake);
             }
 
             return Ok(KKHandshakeActOne { state });
         }
 
-        Err(Error::from(snow::error::Prerequisite::RemotePublicKey))
+        Err(NoiseError::MissingStaticKey)
     }
 }
 
@@ -144,7 +142,7 @@ impl KKHandshakeActTwo {
     pub fn initiator(
         mut handshake: KKHandshakeActOne,
         message: &KKMessageActTwo,
-    ) -> Result<KKHandshakeActTwo, Error> {
+    ) -> Result<KKHandshakeActTwo, NoiseError> {
         // In handshake mode we don't actually care about the message
         let mut _m = [0u8; KK_MSG_2_SIZE];
         handshake.state.read_message(&message.0, &mut _m)?;
@@ -157,7 +155,7 @@ impl KKHandshakeActTwo {
     /// Start the second act of the handshake as a responder (write e, ee, se)
     pub fn responder(
         mut handshake: KKHandshakeActOne,
-    ) -> Result<(KKHandshakeActTwo, KKMessageActTwo), Error> {
+    ) -> Result<(KKHandshakeActTwo, KKMessageActTwo), NoiseError> {
         let mut msg = [0u8; KK_MSG_2_SIZE];
         handshake.state.write_message(&[], &mut msg)?;
 
@@ -193,7 +191,7 @@ fn encrypted_msg_size(plaintext_size: usize) -> usize {
 
 impl KKChannel {
     /// Constructs the KK Noise channel from a final stage KK handshake
-    pub fn from_handshake(state: KKHandshakeActTwo) -> Result<KKChannel, Error> {
+    pub fn from_handshake(state: KKHandshakeActTwo) -> Result<KKChannel, NoiseError> {
         let transport_state = state.state.into_transport_mode()?;
 
         Ok(KKChannel { transport_state })
@@ -203,9 +201,9 @@ impl KKChannel {
     /// Pre-fixes the message with a 2-bytes big-endian length field MAC'ed on its own to permit
     /// incremental reads.
     /// On success, returns the ciphertext.
-    pub fn encrypt_message(&mut self, message: &[u8]) -> Result<NoiseEncryptedMessage, Error> {
+    pub fn encrypt_message(&mut self, message: &[u8]) -> Result<NoiseEncryptedMessage, NoiseError> {
         if message.len() > NOISE_PLAINTEXT_MAX_SIZE {
-            return Err(Error::from(snow::Error::Input));
+            return Err(NoiseError::InvalidPlaintext);
         }
         let mut output = vec![0u8; encrypted_msg_size(message.len())];
 
@@ -223,7 +221,7 @@ impl KKChannel {
     }
 
     /// Get the size of the message following this header
-    pub fn decrypt_header(&mut self, header: &NoiseEncryptedHeader) -> Result<u16, Error> {
+    pub fn decrypt_header(&mut self, header: &NoiseEncryptedHeader) -> Result<u16, NoiseError> {
         let mut buf = [0u8; NOISE_MESSAGE_HEADER_SIZE];
         self.transport_state.read_message(&header.0, &mut buf)?;
 
@@ -234,13 +232,16 @@ impl KKChannel {
     }
 
     /// Get plaintext bytes from a Noise-encrypted message
-    pub fn decrypt_message(&mut self, message: &NoiseEncryptedMessage) -> Result<Vec<u8>, Error> {
+    pub fn decrypt_message(
+        &mut self,
+        message: &NoiseEncryptedMessage,
+    ) -> Result<Vec<u8>, NoiseError> {
         // TODO: could be in NoiseEncryptedMessage's constructor?
         if message.0.len() > NOISE_MESSAGE_MAX_SIZE {
-            return Err(Error::from(snow::Error::Input));
+            return Err(NoiseError::InvalidCiphertext);
         }
         if message.0.len() < MAC_SIZE {
-            return Err(Error::from(snow::Error::Input));
+            return Err(NoiseError::InvalidCiphertext);
         }
         let mut plaintext = vec![0u8; message.0.len()];
 
