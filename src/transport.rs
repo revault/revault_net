@@ -12,8 +12,9 @@ use crate::{
         KK_MSG_2_SIZE, NOISE_MESSAGE_HEADER_SIZE,
     },
 };
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::io::{ErrorKind, Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::{thread, time::Duration};
 
 /// Wrapper type for a TcpStream and KKChannel that automatically enforces authenticated and
 /// encrypted channels when communicating
@@ -25,35 +26,26 @@ pub struct KKTransport {
 
 impl KKTransport {
     /// Connect to server at given address, and enact Noise handshake with given private key.
-    pub fn connect<A: ToSocketAddrs>(
-        addr: A,
+    pub fn connect(
+        addr: SocketAddr,
         my_noise_privkey: &NoisePrivKey,
         their_noise_pubkey: &NoisePubKey,
     ) -> Result<KKTransport, Error> {
-        // TODO: retry timeout
-        let mut stream = TcpStream::connect(addr)
-            .map_err(|e| Error::Transport(format!("TCP connection failed: {:?}", e)))?;
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
 
-        let (cli_act_1, msg_1) = KKHandshakeActOne::initiator(my_noise_privkey, their_noise_pubkey)
-            .map_err(|e| Error::Noise(format!("Failed to initiate act 1: {:?}", e)))?;
+        let (cli_act_1, msg_1) =
+            KKHandshakeActOne::initiator(my_noise_privkey, their_noise_pubkey)?;
 
         // write msg_1 to stream (e, es, ss)
-        stream.write_all(&msg_1.0).map_err(|e| {
-            Error::Transport(format!("Failed to write message 1 to TcpStream: {:?}", e))
-        })?;
+        stream.write_all(&msg_1.0)?;
 
         // read msg_2 from stream (e, ee, se)
         let mut msg_2 = [0u8; KK_MSG_2_SIZE];
-        stream.read_exact(&mut msg_2).map_err(|e| {
-            Error::Transport(format!("Failed to read message 2 from TcpStream: {:?}", e))
-        })?;
+        stream.read_exact(&mut msg_2)?;
 
         let msg_act_2 = KKMessageActTwo(msg_2);
-        let cli_act_2 = KKHandshakeActTwo::initiator(cli_act_1, &msg_act_2)
-            .map_err(|e| Error::Noise(format!("Failed to initiate act 2: {:?}", e)))?;
-        let channel = KKChannel::from_handshake(cli_act_2)
-            .map_err(|e| Error::Noise(format!("Failed to construct KKChannel: {:?}", e)))?;
-
+        let cli_act_2 = KKHandshakeActTwo::initiator(cli_act_1, &msg_act_2)?;
+        let channel = KKChannel::from_handshake(cli_act_2)?;
         Ok(KKTransport { stream, channel })
     }
 
@@ -65,64 +57,89 @@ impl KKTransport {
         my_noise_privkey: &NoisePrivKey,
         their_possible_pubkeys: &[NoisePubKey],
     ) -> Result<KKTransport, Error> {
-        let (mut stream, _) = listener
-            .accept()
-            .map_err(|e| Error::Transport(format!("TCP accept failed: {:?}", e)))?;
+        let (mut stream, _) = listener.accept().map_err(|e| Error::Transport(e))?;
 
         // read msg_1 from stream
         let mut msg_1 = [0u8; KK_MSG_1_SIZE];
-        // FIXME: timeout?
-        stream.read_exact(&mut msg_1).map_err(|e| {
-            Error::Transport(format!("Failed to read message 1 from TcpStream: {:?}", e))
-        })?;
+        stream.read_exact(&mut msg_1)?;
         let msg_act_1 = KKMessageActOne(msg_1);
 
         let serv_act_1 =
-            KKHandshakeActOne::responder(&my_noise_privkey, their_possible_pubkeys, &msg_act_1)
-                .map_err(|e| Error::Noise(format!("Failed to respond in act 1: {:?}", e)))?;
-        let (serv_act_2, msg_2) = KKHandshakeActTwo::responder(serv_act_1)
-            .map_err(|e| Error::Noise(format!("Failed to respond in act 2: {:?}", e)))?;
-        let channel = KKChannel::from_handshake(serv_act_2)
-            .map_err(|e| Error::Noise(format!("Failed to construct KXChannel: {:?}", e)))?;
+            KKHandshakeActOne::responder(&my_noise_privkey, their_possible_pubkeys, &msg_act_1)?;
+        let (serv_act_2, msg_2) = KKHandshakeActTwo::responder(serv_act_1)?;
+        let channel = KKChannel::from_handshake(serv_act_2)?;
 
         // write msg_2 to stream
-        stream.write_all(&msg_2.0).map_err(|e| {
-            Error::Transport(format!("Failed to write message 2 to TcpStream: {:?}", e))
-        })?;
+        stream.write_all(&msg_2.0)?;
 
         Ok(KKTransport { stream, channel })
     }
 
-    /// Write a message to the other end of the encrypted communication channel.
+    /// Write a message to the other end of the encrypted communication channel. Attempts
+    /// to recover from certain kinds of error.
     pub fn write(&mut self, msg: &[u8]) -> Result<(), Error> {
         let encrypted_msg = self.channel.encrypt_message(msg)?.0;
-        self.stream.write_all(&encrypted_msg).map_err(|e| {
-            Error::Transport(format!(
-                "Failed to send encrypted message with TcpStream: {:?}",
-                e
-            ))
-        })
+        let mut attempts = 0;
+        loop {
+            match self.stream.write_all(&encrypted_msg) {
+                Ok(n) => return Ok(n),
+                // write_all returns the first error of non-ErrorKind::Interrupted kind that
+                // write returns, in which case no bytes were written to the writer, and can
+                // try again. Here we try up to 5 times.
+                Err(e) => {
+                    attempts += 1;
+                    if attempts == 5 {
+                        return Err(Error::from(e));
+                    } else {
+                        thread::sleep(Duration::from_secs(1));
+                        continue;
+                    }
+                }
+            }
+        }
     }
 
     /// Read a message from the other end of the encrypted communication channel.
-    /// Will return on connection interruption. Note that this blocks (without timeout!)
-    pub fn read(&mut self) -> Result<Vec<u8>, Error> {
+    fn _read(&mut self) -> Result<Vec<u8>, Error> {
         let mut cypherheader = [0u8; NOISE_MESSAGE_HEADER_SIZE];
-        self.stream
-            .read_exact(&mut cypherheader)
-            // FIXME: use an Error::Io(io::Error)
-            .map_err(|e| Error::Transport(format!("Reading header: {}", e)))?;
+        self.stream.read_exact(&mut cypherheader)?;
         let msg_len = self
             .channel
             .decrypt_header(&NoiseEncryptedHeader(cypherheader))?;
 
         // Note that `msg_len` cannot be > 65K (2 bytes)
         let mut cypherbody = vec![0u8; msg_len as usize];
-        self.stream
-            .read_exact(&mut cypherbody)
-            .map_err(|e| Error::Transport(format!("Reading body: {}", e)))?;
+        self.stream.read_exact(&mut cypherbody)?;
         self.channel
             .decrypt_message(&NoiseEncryptedMessage(cypherbody))
+            .map_err(|e| e.into())
+    }
+
+    /// Read a message from the other end of the encrypted communication channel.
+    /// Will recover from certain kinds of error, those for which no bytes are
+    /// read from the stream, by retrying up to 5 times with a 1s sleep between
+    /// attempts. After 5 attempts, or an unrecoverable error, will return an
+    /// error.  
+    pub fn read(&mut self) -> Result<Vec<u8>, Error> {
+        let mut attempts = 0;
+        loop {
+            match self._read() {
+                Ok(msg) => return Ok(msg),
+                Err(error) => match error {
+                    e if attempts == 4 => return Err(e),
+                    Error::Transport(e) => match e.kind() {
+                        ErrorKind::UnexpectedEof => return Err(Error::Transport(e)),
+                        ErrorKind::Interrupted => return Err(Error::Transport(e)),
+                        _ => {
+                            thread::sleep(Duration::from_secs(1));
+                            continue;
+                        }
+                    },
+                    e => e,
+                },
+            };
+            attempts += 1;
+        }
     }
 
     /// Get the static public key of the peer
@@ -134,7 +151,6 @@ impl KKTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::Error;
     use snow::{resolvers::SodiumResolver, Builder, Keypair};
     use std::convert::TryInto;
     use std::thread;
@@ -142,10 +158,7 @@ mod tests {
     /// Revault must specify the SodiumResolver to use sodiumoxide as the cryptography provider
     /// when generating a static key pair for secure communication.
     pub fn generate_keypair() -> Keypair {
-        let noise_params = "Noise_KK_25519_ChaChaPoly_SHA256"
-            .parse()
-            .map_err(|e| Error::Noise(format!("Invalid Noise Pattern: {}", e)))
-            .unwrap();
+        let noise_params = "Noise_KK_25519_ChaChaPoly_SHA256".parse().unwrap();
         Builder::with_resolver(noise_params, Box::new(SodiumResolver::default()))
             .generate_keypair()
             .unwrap()
