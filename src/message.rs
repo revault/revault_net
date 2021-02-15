@@ -54,20 +54,6 @@ pub mod server {
     use serde::{Deserialize, Serialize};
     use std::collections::BTreeMap;
 
-    /// Some of the signatures we exchange may be encrypted (emergency tx ones).
-    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub enum RevaultSignature {
-        /// A plaintext (hex) signature
-        PlaintextSig(Signature),
-        /// An encryped (b64) signature
-        EncryptedSig {
-            /// Curve25519 public key used to encrypt the signature
-            encryption_key: sodiumoxide::crypto::box_::PublicKey,
-            /// Encrypted Bitcoin ECDSA signature
-            encrypted_signature: Vec<u8>,
-        },
-    }
-
     /// Message response to get_sigs from sync server to wallet client with a
     /// (potentially incomplete) mapping of each public key to each signature
     /// required to verify this **usual** transaction
@@ -75,7 +61,7 @@ pub mod server {
     pub struct Sigs {
         /// Mapping of public keys to ECDSA signatures for the requested usual
         /// transaction.
-        pub signatures: BTreeMap<PublicKey, RevaultSignature>,
+        pub signatures: BTreeMap<PublicKey, Signature>,
     }
 
     /// Sent by a manager to advertise the spend transaction that will eventually
@@ -126,13 +112,13 @@ pub mod server {
     }
 
     /// Message from a stakeholder client to sync server to share (at any time)
-    /// the signature for an usual transaction with all participants.
+    /// the signature for a revocation transaction with all participants.
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
     pub struct Sig {
         /// Secp256k1 public key used to sign the transaction (hex)
         pub pubkey: PublicKey,
         /// Bitcoin ECDSA signature as hex
-        pub signature: RevaultSignature,
+        pub signature: Signature,
         /// Txid of the transaction the signature applies to
         pub id: Txid,
     }
@@ -285,39 +271,19 @@ mod tests {
         roundtrip!(msg);
     }
 
-    fn dummy_encrypt_sig(sig: &[u8]) -> Vec<u8> {
-        let (dum_pk, dum_sk) = sodiumoxide::crypto::box_::gen_keypair();
-        let nonce = sodiumoxide::crypto::box_::gen_nonce();
-        sodiumoxide::crypto::box_::seal(sig, &nonce, &dum_pk, &dum_sk)
-    }
-
     #[test]
     fn serde_server_sig() {
         let pubkey = get_dummy_pubkey();
-        let sig = get_dummy_sig();
+        let signature = get_dummy_sig();
         let id = get_dummy_txid();
 
         // Cleartext signature
-        let msg1 = server::FromStakeholder::Sig(server::Sig {
-            pubkey,
-            signature: server::RevaultSignature::PlaintextSig(sig),
-            id,
-        });
-        roundtrip!(msg1);
-
-        // Encrypted signature
-        let encrypted_signature = dummy_encrypt_sig(&sig.serialize_der());
-        let (encryption_key, _) = sodiumoxide::crypto::box_::gen_keypair();
-        let signature = server::RevaultSignature::EncryptedSig {
-            encryption_key,
-            encrypted_signature,
-        };
-        let msg2 = server::FromStakeholder::Sig(server::Sig {
+        let msg = server::FromStakeholder::Sig(server::Sig {
             pubkey,
             signature,
             id,
         });
-        roundtrip!(msg2);
+        roundtrip!(msg);
     }
 
     #[test]
@@ -331,31 +297,16 @@ mod tests {
     fn serde_server_sigs() {
         let pubkey: PublicKey = get_dummy_pubkey();
         let sig = get_dummy_sig();
-        let signatures: BTreeMap<PublicKey, server::RevaultSignature> =
-            [(pubkey, server::RevaultSignature::PlaintextSig(sig))]
-                .iter()
-                .cloned()
-                .collect();
+        let signatures = [(pubkey, sig)].iter().cloned().collect();
 
-        // Cleartext signatures
-        let msg1 = server::Sigs { signatures };
-        roundtrip!(msg1);
+        // With signatures
+        let msg = server::Sigs { signatures };
+        roundtrip!(msg);
 
-        // Encrypted signatures
-        let encrypted_signature = dummy_encrypt_sig(&sig.serialize_der());
-        let (encryption_key, _) = sodiumoxide::crypto::box_::gen_keypair();
-        let encrypted_signature = server::RevaultSignature::EncryptedSig {
-            encryption_key,
-            encrypted_signature,
-        };
-        let signatures = [(pubkey, encrypted_signature)].iter().cloned().collect();
-        let msg2 = server::Sigs { signatures };
-        roundtrip!(msg2);
-
-        // No signatures
+        // Without signatures
         let signatures = BTreeMap::new();
-        let msg3 = server::Sigs { signatures };
-        roundtrip!(msg3);
+        let msg = server::Sigs { signatures };
+        roundtrip!(msg);
     }
 
     #[test]
