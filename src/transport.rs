@@ -8,7 +8,7 @@ use crate::{
     error::Error,
     noise::{
         KKChannel, KKHandshakeActOne, KKHandshakeActTwo, KKMessageActOne, KKMessageActTwo,
-        NoiseEncryptedHeader, NoiseEncryptedMessage, NoisePrivKey, NoisePubKey, KK_MSG_1_SIZE,
+        NoiseEncryptedHeader, NoiseEncryptedMessage, PublicKey, SecretKey, KK_MSG_1_SIZE,
         KK_MSG_2_SIZE, NOISE_MESSAGE_HEADER_SIZE,
     },
 };
@@ -28,8 +28,8 @@ impl KKTransport {
     /// Connect to server at given address, and enact Noise handshake with given private key.
     pub fn connect(
         addr: SocketAddr,
-        my_noise_privkey: &NoisePrivKey,
-        their_noise_pubkey: &NoisePubKey,
+        my_noise_privkey: &SecretKey,
+        their_noise_pubkey: &PublicKey,
     ) -> Result<KKTransport, Error> {
         let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
 
@@ -54,8 +54,8 @@ impl KKTransport {
     /// This is used by servers to identify the origin of the message.
     pub fn accept(
         listener: &TcpListener,
-        my_noise_privkey: &NoisePrivKey,
-        their_possible_pubkeys: &[NoisePubKey],
+        my_noise_privkey: &SecretKey,
+        their_possible_pubkeys: &[PublicKey],
     ) -> Result<KKTransport, Error> {
         let (mut stream, _) = listener.accept().map_err(|e| Error::Transport(e))?;
 
@@ -143,7 +143,7 @@ impl KKTransport {
     }
 
     /// Get the static public key of the peer
-    pub fn remote_static(&self) -> NoisePubKey {
+    pub fn remote_static(&self) -> PublicKey {
         self.channel.remote_static()
     }
 }
@@ -151,33 +151,20 @@ impl KKTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use snow::{resolvers::SodiumResolver, Builder, Keypair};
-    use std::convert::TryInto;
+    use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::gen_keypair;
     use std::thread;
-
-    /// Revault must specify the SodiumResolver to use sodiumoxide as the cryptography provider
-    /// when generating a static key pair for secure communication.
-    pub fn generate_keypair() -> Keypair {
-        let noise_params = "Noise_KK_25519_ChaChaPoly_SHA256".parse().unwrap();
-        Builder::with_resolver(noise_params, Box::new(SodiumResolver::default()))
-            .generate_keypair()
-            .unwrap()
-    }
 
     #[test]
     fn test_transport_kk() {
-        let (client_keypair, server_keypair) = (generate_keypair(), generate_keypair());
-
-        let client_pubkey = NoisePubKey(client_keypair.public[..].try_into().unwrap());
-        let server_pubkey = NoisePubKey(server_keypair.public[..].try_into().unwrap());
-        let server_privkey = NoisePrivKey(server_keypair.private[..].try_into().unwrap());
+        let ((client_pubkey, client_privkey), (server_pubkey, server_privkey)) =
+            (gen_keypair(), gen_keypair());
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
 
         // client thread
         let cli_thread = thread::spawn(move || {
-            let my_noise_privkey = NoisePrivKey(client_keypair.private[..].try_into().unwrap());
+            let my_noise_privkey = client_privkey;
             let their_noise_pubkey = server_pubkey;
 
             let mut cli_channel =
