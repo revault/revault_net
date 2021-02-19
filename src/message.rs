@@ -77,15 +77,12 @@ pub mod server {
     impl SetSpendTx {
         /// Create a SetSpendTx message out of a SpendTransaction. The SpendTransaction MUST
         /// have been finalized beforehand!
-        pub fn from_spend_tx(
-            deposit_outpoint: OutPoint,
-            tx: SpendTransaction,
-        ) -> Result<Self, revault_tx::Error> {
-            // FIXME: implement into_bitcoin_serialized upstream!
-            tx.as_bitcoin_serialized().map(|transaction| Self {
+        pub fn from_spend_tx(deposit_outpoint: OutPoint, tx: SpendTransaction) -> Self {
+            let transaction = tx.into_bitcoin_serialized();
+            Self {
                 deposit_outpoint,
                 transaction,
-            })
+            }
         }
 
         /// Get the raw spend transaction
@@ -215,8 +212,7 @@ mod tests {
     }
 
     fn get_dummy_spend_tx() -> SpendTransaction {
-        // A valid psbt from https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#Encoding
-        let psbt_base64 = "cHNidP8BAHUCAAAAASaBcTce3/KF6Tet7qSze3gADAVmy7OtZGQXE8pCFxv2AAAAAAD+////AtPf9QUAAAAAGXapFNDFmQPFusKGh2DpD9UhpGZap2UgiKwA4fUFAAAAABepFDVF5uM7gyxHBQ8k0+65PJwDlIvHh7MuEwAAAQD9pQEBAAAAAAECiaPHHqtNIOA3G7ukzGmPopXJRjr6Ljl/hTPMti+VZ+UBAAAAFxYAFL4Y0VKpsBIDna89p95PUzSe7LmF/////4b4qkOnHf8USIk6UwpyN+9rRgi7st0tAXHmOuxqSJC0AQAAABcWABT+Pp7xp0XpdNkCxDVZQ6vLNL1TU/////8CAMLrCwAAAAAZdqkUhc/xCX/Z4Ai7NK9wnGIZeziXikiIrHL++E4sAAAAF6kUM5cluiHv1irHU6m80GfWx6ajnQWHAkcwRAIgJxK+IuAnDzlPVoMR3HyppolwuAJf3TskAinwf4pfOiQCIAGLONfc0xTnNMkna9b7QPZzMlvEuqFEyADS8vAtsnZcASED0uFWdJQbrUqZY3LLh+GFbTZSYG2YVi/jnF6efkE/IQUCSDBFAiEA0SuFLYXc2WHS9fSrZgZU327tzHlMDDPOXMMJ/7X85Y0CIGczio4OFyXBl/saiK9Z9R5E5CVbIBZ8hoQDHAXR8lkqASECI7cr7vCWXRC+B3jv7NYfysb3mk6haTkzgHNEZPhPKrMAAAAAAAAA";
+        let psbt_base64 = "cHNidP8BAGcCAAAAAY74R7yfKjYatj96vo5Ww2nRXnMLqJZ0sJtCZ0vUDJT1AAAAAADNVgAAAoDYAQAAAAAAIgAgrhve44jyE2BUeXInsUqYPSjeKfUi8+vcTiX9K649nlIBAAAAAAAAAAAAAAAAAAEBK6BK9QUAAAAAIgAgGOT4nZS2eDtYm83Cvrva0Ozxmrw4Wjin73s81+Z/MfEBAwQBAAAAAQX9YgJTIQJXWghCPRbOUhpx+hi93OfpK75maJRYRC38QR4f7+NtFiECM9/45YqHN25XccUBgRIDEcbyVEgt7j61+c9r3RZ7FzohAriewns/EcwKUVDvv1bxr790pkzQRzmqfV3dQ9mzBjaQU65kdqkUqOUtXIDgEzokTmljuXvjUVK6PKqIrGt2qRSxhJ72lPFm92bL1zs0fxxSxgvWIIisbJNrdqkUH5eaO3DdSZU5iyaVBAxs4jQpiiaIrGyTa3apFORRbu2KExrgnCCww5w9TraaoolAiKxsk2t2qRTdO8BPO/zd71a6yb+Cns88TZKG84isbJNrdqkU32Y5t5RL0rYBZZvHWmii6eTcgZ+IrGyTa3apFK83DFJxO+ke61QLvGNyYnmSwKrDiKxsk2t2qRQOTi7K/HfcXcC5iBLjCnMWcMWjIYisbJNYh2dYIQLR/ezgE85uXQeHPU/DkO9OMViCc8qtX1GT1B+pC3O4ASECx3y8Y+ejFiUsobbCiYlAU3h87Q7y+QhADwLFygARZXchAiQAGsW+t/RQ0AJ1axuUM9e58WBlzItzzI4xB8sPnMrsIQKnh96esMFOEyF0tbKBXWmAtff+mxSOoyQVefv/JN/vhSEDiQaTfG58TKdD2N4DbB+wCd3Sz04D4Psle+84rmIW51ghAzFWj+Qs+0gWprDMs3Aat9f5wMZuZaZth1AAtHbe2NbxIQL8522r0lMYLHkL+h2yus2uJP8y6N28+cwpWyaTFNnP+CECdjQgoJBQYwTi7KPMwt1RBcdP0KnnWdYNCSkUmtF972hYrwLOVrJoAAEBaVEhAldaCEI9Fs5SGnH6GL3c5+krvmZolFhELfxBHh/v420WIQIz3/jlioc3bldxxQGBEgMRxvJUSC3uPrX5z2vdFnsXOiECuJ7Cez8RzApRUO+/VvGvv3SmTNBHOap9Xd1D2bMGNpBTrgAA";
         serde_json::from_str(&serde_json::to_string(&psbt_base64).unwrap()).unwrap()
     }
 
@@ -266,7 +262,7 @@ mod tests {
 
         // Response
         let msg = server::SpendTx {
-            transaction: get_dummy_spend_tx().as_bitcoin_serialized().unwrap(),
+            transaction: get_dummy_spend_tx().into_bitcoin_serialized(),
         };
         roundtrip!(msg);
     }
@@ -316,7 +312,7 @@ mod tests {
         )
         .unwrap();
         let unsigned_spend_tx: SpendTransaction = get_dummy_spend_tx();
-        let msg = server::SetSpendTx::from_spend_tx(deposit_outpoint, unsigned_spend_tx).unwrap();
+        let msg = server::SetSpendTx::from_spend_tx(deposit_outpoint, unsigned_spend_tx);
         roundtrip!(msg);
     }
 
