@@ -1,13 +1,19 @@
 [package]
 name = "revault_net"
 version = "0.0.1"
-authors = ["JSwambo <jake.t.swambo@hotmail.co.uk>"]
+authors = ["JSwambo <jake.t.swambo@hotmail.co.uk>", "Antoine Poinsot <darosior@protonmail.com>"]
 edition = "2018"
+repository = "https://github.com/revault/revault_tx"
+license-file = "LICENCE"
+keywords = ["bitcoin", "vault", "Noise", "transport"]
+description = "Transport and messages implementation of the version 0 Revault protocol"
+exclude = [".github/", "fuzz"]
+
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 revault_tx = { version = "0.1", features = ["use-serde"] }
-snow = { version = "0.7.2", default-features = false, features = ["libsodium-resolver"] }
+snow = { version = "0.7", default-features = false, features = ["libsodium-resolver"] }
 
 # Used for Noise crypto and generating pubkeys
 sodiumoxide = { version = "0.2", features = ["serde"] }
