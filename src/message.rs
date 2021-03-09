@@ -156,7 +156,7 @@ pub mod cosigner {
     /// Message from a manager to a cosigning server who will soon attempt to
     /// unvault and spend a vault utxo
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub struct Sign {
+    pub struct SignRequest {
         /// The partially signed unvault transaction
         pub tx: SpendTransaction,
     }
@@ -164,9 +164,9 @@ pub mod cosigner {
     /// Message returned from the cosigning server to the manager containing
     /// the requested signature
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub struct SignatureMessage {
+    pub struct SignResponse {
         /// Cosigning server's signature for the unvault transaction
-        pub tx: SpendTransaction,
+        pub tx: Option<SpendTransaction>,
     }
 }
 
@@ -319,14 +319,11 @@ mod tests {
     #[test]
     fn serde_cosigner_sign() {
         let tx = get_dummy_spend_tx();
-        let msg = cosigner::Sign { tx };
+        let msg = cosigner::SignRequest { tx };
         roundtrip!(msg);
-    }
 
-    #[test]
-    fn serder_cosigner_signature_message() {
-        let tx = get_dummy_spend_tx();
-        let msg = cosigner::SignatureMessage { tx };
+        let tx = Some(get_dummy_spend_tx());
+        let msg = cosigner::SignResponse { tx };
         roundtrip!(msg);
     }
 }
