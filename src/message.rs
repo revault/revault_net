@@ -166,7 +166,7 @@ pub mod cosigner {
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
     pub struct SignatureMessage {
         /// Cosigning server's signature for the unvault transaction
-        pub tx: SpendTransaction,
+        pub tx: Option<SpendTransaction>,
     }
 }
 
@@ -324,8 +324,8 @@ mod tests {
     }
 
     #[test]
-    fn serder_cosigner_signature_message() {
-        let tx = get_dummy_spend_tx();
+    fn serde_cosigner_signature_message() {
+        let tx = Some(get_dummy_spend_tx());
         let msg = cosigner::SignatureMessage { tx };
         roundtrip!(msg);
     }
