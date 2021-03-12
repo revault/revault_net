@@ -207,10 +207,6 @@ mod tests {
         .expect("compact signatures are 64 bytes; DER signatures are 68-72 bytes")
     }
 
-    fn get_dummy_txid() -> Txid {
-        Txid::default()
-    }
-
     fn get_dummy_spend_tx() -> SpendTransaction {
         let psbt_base64 = "cHNidP8BAGcCAAAAAY74R7yfKjYatj96vo5Ww2nRXnMLqJZ0sJtCZ0vUDJT1AAAAAADNVgAAAoDYAQAAAAAAIgAgrhve44jyE2BUeXInsUqYPSjeKfUi8+vcTiX9K649nlIBAAAAAAAAAAAAAAAAAAEBK6BK9QUAAAAAIgAgGOT4nZS2eDtYm83Cvrva0Ozxmrw4Wjin73s81+Z/MfEBAwQBAAAAAQX9YgJTIQJXWghCPRbOUhpx+hi93OfpK75maJRYRC38QR4f7+NtFiECM9/45YqHN25XccUBgRIDEcbyVEgt7j61+c9r3RZ7FzohAriewns/EcwKUVDvv1bxr790pkzQRzmqfV3dQ9mzBjaQU65kdqkUqOUtXIDgEzokTmljuXvjUVK6PKqIrGt2qRSxhJ72lPFm92bL1zs0fxxSxgvWIIisbJNrdqkUH5eaO3DdSZU5iyaVBAxs4jQpiiaIrGyTa3apFORRbu2KExrgnCCww5w9TraaoolAiKxsk2t2qRTdO8BPO/zd71a6yb+Cns88TZKG84isbJNrdqkU32Y5t5RL0rYBZZvHWmii6eTcgZ+IrGyTa3apFK83DFJxO+ke61QLvGNyYnmSwKrDiKxsk2t2qRQOTi7K/HfcXcC5iBLjCnMWcMWjIYisbJNYh2dYIQLR/ezgE85uXQeHPU/DkO9OMViCc8qtX1GT1B+pC3O4ASECx3y8Y+ejFiUsobbCiYlAU3h87Q7y+QhADwLFygARZXchAiQAGsW+t/RQ0AJ1axuUM9e58WBlzItzzI4xB8sPnMrsIQKnh96esMFOEyF0tbKBXWmAtff+mxSOoyQVefv/JN/vhSEDiQaTfG58TKdD2N4DbB+wCd3Sz04D4Psle+84rmIW51ghAzFWj+Qs+0gWprDMs3Aat9f5wMZuZaZth1AAtHbe2NbxIQL8522r0lMYLHkL+h2yus2uJP8y6N28+cwpWyaTFNnP+CECdjQgoJBQYwTi7KPMwt1RBcdP0KnnWdYNCSkUmtF972hYrwLOVrJoAAEBaVEhAldaCEI9Fs5SGnH6GL3c5+krvmZolFhELfxBHh/v420WIQIz3/jlioc3bldxxQGBEgMRxvJUSC3uPrX5z2vdFnsXOiECuJ7Cez8RzApRUO+/VvGvv3SmTNBHOap9Xd1D2bMGNpBTrgAA";
         serde_json::from_str(&serde_json::to_string(&psbt_base64).unwrap()).unwrap()
@@ -221,6 +217,17 @@ mod tests {
             let serialized_msg = serde_json::to_string(&$msg).unwrap();
             let deserialized_msg = serde_json::from_str(&serialized_msg).unwrap();
             assert_eq!($msg, deserialized_msg);
+            assert_eq!(
+                serialized_msg,
+                String::from_utf8_lossy(&serde_json::to_vec(&$msg).unwrap())
+            );
+        };
+    }
+
+    macro_rules! assert_str_ser {
+        ($msg:ident, $str:expr) => {
+            let ser = serde_json::to_string(&$msg).unwrap();
+            assert_eq!(ser, $str);
         };
     }
 
@@ -229,7 +236,7 @@ mod tests {
         let pubkey: PublicKey = get_dummy_pubkey();
         let sig: Signature = get_dummy_sig();
         let signatures: BTreeMap<PublicKey, Signature> = [(pubkey, sig)].iter().cloned().collect();
-        let txid: Txid = get_dummy_txid();
+        let txid = Txid::default();
         let deposit_outpoint = OutPoint::from_str(
             "3694ef9e8fcd78e9b8165a41e6f5e2b5f10bcd92c6d6e42b3325a850df56cd83:0",
         )
@@ -240,14 +247,22 @@ mod tests {
             deposit_outpoint,
         };
         roundtrip!(msg);
+        assert_str_ser!(
+            msg,
+            r#"{"signatures":{"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c":"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2"},"txid":"0000000000000000000000000000000000000000000000000000000000000000","deposit_outpoint":"3694ef9e8fcd78e9b8165a41e6f5e2b5f10bcd92c6d6e42b3325a850df56cd83:0"}"#
+        );
     }
 
     #[test]
     fn serde_watchtower_sig_ack() {
         let ack = true;
-        let txid: Txid = get_dummy_txid();
+        let txid = Txid::default();
         let msg = watchtower::SigAck { ack, txid };
         roundtrip!(msg);
+        assert_str_ser!(
+            msg,
+            r#"{"ack":true,"txid":"0000000000000000000000000000000000000000000000000000000000000000"}"#
+        );
     }
 
     #[test]
@@ -259,34 +274,51 @@ mod tests {
             .unwrap(),
         };
         roundtrip!(msg);
+        assert_str_ser!(
+            msg,
+            r#"{"deposit_outpoint":"6a276a96807dd45ceed9cbd6fd48b5edf185623b23339a1643e19e8dcbf2e474:0"}"#
+        );
 
         // Response
         let msg = server::SpendTx {
             transaction: get_dummy_spend_tx().into_bitcoin_serialized(),
         };
+        eprintln!("{}", get_dummy_spend_tx().hex());
         roundtrip!(msg);
+        // FIXME: transactions should be serialized as hex!!
+        //assert_str_ser!(
+        //msg,
+        //r#"{"transaction":"02000000018ef847bc9f2a361ab63f7abe8e56c369d15e730ba89674b09b42674bd40c94f50000000000cd5600000280d8010000000000220020ae1bdee388f2136054797227b14a983d28de29f522f3ebdc4e25fd2bae3d9e5201000000000000000000000000"}"#
+        //);
     }
 
     #[test]
     fn serde_server_sig() {
         let pubkey = get_dummy_pubkey();
         let signature = get_dummy_sig();
-        let id = get_dummy_txid();
+        let id = Txid::default();
 
-        // Cleartext signature
         let msg = server::FromStakeholder::Sig(server::Sig {
             pubkey,
             signature,
             id,
         });
         roundtrip!(msg);
+        assert_str_ser!(
+            msg,
+            r#"{"pubkey":"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c","signature":"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2","id":"0000000000000000000000000000000000000000000000000000000000000000"}"#
+        );
     }
 
     #[test]
     fn serde_server_get_sigs() {
-        let id = get_dummy_txid();
+        let id = Txid::default();
         let msg = server::FromStakeholder::GetSigs(server::GetSigs { id });
         roundtrip!(msg);
+        assert_str_ser!(
+            msg,
+            r#"{"id":"0000000000000000000000000000000000000000000000000000000000000000"}"#
+        );
     }
 
     #[test]
@@ -298,11 +330,16 @@ mod tests {
         // With signatures
         let msg = server::Sigs { signatures };
         roundtrip!(msg);
+        assert_str_ser!(
+            msg,
+            r#"{"signatures":{"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c":"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2"}}"#
+        );
 
         // Without signatures
         let signatures = BTreeMap::new();
         let msg = server::Sigs { signatures };
         roundtrip!(msg);
+        assert_str_ser!(msg, r#"{"signatures":{}}"#);
     }
 
     #[test]
@@ -314,6 +351,11 @@ mod tests {
         let unsigned_spend_tx: SpendTransaction = get_dummy_spend_tx();
         let msg = server::SetSpendTx::from_spend_tx(deposit_outpoint, unsigned_spend_tx);
         roundtrip!(msg);
+        // FIXME: invalid serialization of transaction!
+        //assert_str_ser!(
+        //msg,
+        //r#"{"deposit_outpoint":"6e4977728e7100db80c30751f27cf834b7a1e02d083a4338874e48d1f3694446:0","transaction":"02000000018ef847bc9f2a361ab63f7abe8e56c369d15e730ba89674b09b42674bd40c94f50000000000cd5600000280d8010000000000220020ae1bdee388f2136054797227b14a983d28de29f522f3ebdc4e25fd2bae3d9e5201000000000000000000000000"}"#
+        //);
     }
 
     #[test]
@@ -321,9 +363,21 @@ mod tests {
         let tx = get_dummy_spend_tx();
         let msg = cosigner::SignRequest { tx };
         roundtrip!(msg);
+        assert_str_ser!(
+            msg,
+            r#"{"tx":"cHNidP8BAGcCAAAAAY74R7yfKjYatj96vo5Ww2nRXnMLqJZ0sJtCZ0vUDJT1AAAAAADNVgAAAoDYAQAAAAAAIgAgrhve44jyE2BUeXInsUqYPSjeKfUi8+vcTiX9K649nlIBAAAAAAAAAAAAAAAAAAEBK6BK9QUAAAAAIgAgGOT4nZS2eDtYm83Cvrva0Ozxmrw4Wjin73s81+Z/MfEBAwQBAAAAAQX9YgJTIQJXWghCPRbOUhpx+hi93OfpK75maJRYRC38QR4f7+NtFiECM9/45YqHN25XccUBgRIDEcbyVEgt7j61+c9r3RZ7FzohAriewns/EcwKUVDvv1bxr790pkzQRzmqfV3dQ9mzBjaQU65kdqkUqOUtXIDgEzokTmljuXvjUVK6PKqIrGt2qRSxhJ72lPFm92bL1zs0fxxSxgvWIIisbJNrdqkUH5eaO3DdSZU5iyaVBAxs4jQpiiaIrGyTa3apFORRbu2KExrgnCCww5w9TraaoolAiKxsk2t2qRTdO8BPO/zd71a6yb+Cns88TZKG84isbJNrdqkU32Y5t5RL0rYBZZvHWmii6eTcgZ+IrGyTa3apFK83DFJxO+ke61QLvGNyYnmSwKrDiKxsk2t2qRQOTi7K/HfcXcC5iBLjCnMWcMWjIYisbJNYh2dYIQLR/ezgE85uXQeHPU/DkO9OMViCc8qtX1GT1B+pC3O4ASECx3y8Y+ejFiUsobbCiYlAU3h87Q7y+QhADwLFygARZXchAiQAGsW+t/RQ0AJ1axuUM9e58WBlzItzzI4xB8sPnMrsIQKnh96esMFOEyF0tbKBXWmAtff+mxSOoyQVefv/JN/vhSEDiQaTfG58TKdD2N4DbB+wCd3Sz04D4Psle+84rmIW51ghAzFWj+Qs+0gWprDMs3Aat9f5wMZuZaZth1AAtHbe2NbxIQL8522r0lMYLHkL+h2yus2uJP8y6N28+cwpWyaTFNnP+CECdjQgoJBQYwTi7KPMwt1RBcdP0KnnWdYNCSkUmtF972hYrwLOVrJoAAEBaVEhAldaCEI9Fs5SGnH6GL3c5+krvmZolFhELfxBHh/v420WIQIz3/jlioc3bldxxQGBEgMRxvJUSC3uPrX5z2vdFnsXOiECuJ7Cez8RzApRUO+/VvGvv3SmTNBHOap9Xd1D2bMGNpBTrgAA"}"#
+        );
 
         let tx = Some(get_dummy_spend_tx());
         let msg = cosigner::SignResponse { tx };
         roundtrip!(msg);
+        assert_str_ser!(
+            msg,
+            r#"{"tx":"cHNidP8BAGcCAAAAAY74R7yfKjYatj96vo5Ww2nRXnMLqJZ0sJtCZ0vUDJT1AAAAAADNVgAAAoDYAQAAAAAAIgAgrhve44jyE2BUeXInsUqYPSjeKfUi8+vcTiX9K649nlIBAAAAAAAAAAAAAAAAAAEBK6BK9QUAAAAAIgAgGOT4nZS2eDtYm83Cvrva0Ozxmrw4Wjin73s81+Z/MfEBAwQBAAAAAQX9YgJTIQJXWghCPRbOUhpx+hi93OfpK75maJRYRC38QR4f7+NtFiECM9/45YqHN25XccUBgRIDEcbyVEgt7j61+c9r3RZ7FzohAriewns/EcwKUVDvv1bxr790pkzQRzmqfV3dQ9mzBjaQU65kdqkUqOUtXIDgEzokTmljuXvjUVK6PKqIrGt2qRSxhJ72lPFm92bL1zs0fxxSxgvWIIisbJNrdqkUH5eaO3DdSZU5iyaVBAxs4jQpiiaIrGyTa3apFORRbu2KExrgnCCww5w9TraaoolAiKxsk2t2qRTdO8BPO/zd71a6yb+Cns88TZKG84isbJNrdqkU32Y5t5RL0rYBZZvHWmii6eTcgZ+IrGyTa3apFK83DFJxO+ke61QLvGNyYnmSwKrDiKxsk2t2qRQOTi7K/HfcXcC5iBLjCnMWcMWjIYisbJNYh2dYIQLR/ezgE85uXQeHPU/DkO9OMViCc8qtX1GT1B+pC3O4ASECx3y8Y+ejFiUsobbCiYlAU3h87Q7y+QhADwLFygARZXchAiQAGsW+t/RQ0AJ1axuUM9e58WBlzItzzI4xB8sPnMrsIQKnh96esMFOEyF0tbKBXWmAtff+mxSOoyQVefv/JN/vhSEDiQaTfG58TKdD2N4DbB+wCd3Sz04D4Psle+84rmIW51ghAzFWj+Qs+0gWprDMs3Aat9f5wMZuZaZth1AAtHbe2NbxIQL8522r0lMYLHkL+h2yus2uJP8y6N28+cwpWyaTFNnP+CECdjQgoJBQYwTi7KPMwt1RBcdP0KnnWdYNCSkUmtF972hYrwLOVrJoAAEBaVEhAldaCEI9Fs5SGnH6GL3c5+krvmZolFhELfxBHh/v420WIQIz3/jlioc3bldxxQGBEgMRxvJUSC3uPrX5z2vdFnsXOiECuJ7Cez8RzApRUO+/VvGvv3SmTNBHOap9Xd1D2bMGNpBTrgAA"}"#
+        );
+
+        let msg = cosigner::SignResponse { tx: None };
+        roundtrip!(msg);
+        assert_str_ser!(msg, r#"{"tx":null}"#);
     }
 }
