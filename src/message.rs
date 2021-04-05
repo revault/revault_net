@@ -8,7 +8,7 @@
 
 /// Watchtower
 pub mod watchtower {
-    use revault_tx::bitcoin::{
+    use bitcoin::{
         hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
         OutPoint,
@@ -43,14 +43,12 @@ pub mod watchtower {
 
 /// Synchronisation Server
 pub mod server {
-    use revault_tx::{
-        bitcoin::{
-            hash_types::Txid,
-            secp256k1::{key::PublicKey, Signature},
-            OutPoint, Transaction,
-        },
-        transactions::{RevaultTransaction, SpendTransaction},
+    use bitcoin::{
+        hash_types::Txid,
+        secp256k1::{key::PublicKey, Signature},
+        OutPoint, Transaction,
     };
+    use revault_tx::transactions::{RevaultTransaction, SpendTransaction};
     use serde::{Deserialize, Serialize};
     use std::collections::BTreeMap;
 
