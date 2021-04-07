@@ -12,7 +12,8 @@ exclude = [".github/", "fuzz"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-revault_tx = { version = "0.1", features = ["use-serde"] }
+revault_tx = { version = "0.2", features = ["use-serde"] }
+bitcoin = { version = "0.26", features = ["use-serde"] }
 snow = { version = "0.7", default-features = false, features = ["libsodium-resolver"] }
 
 # Used for Noise crypto and generating pubkeys
