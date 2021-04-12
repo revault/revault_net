@@ -174,6 +174,18 @@ pub mod server {
         /// Managers can fetch pre-signed transaction signatures
         GetSigs(GetSigs),
     }
+
+    /// A message sent from either a manager or a stakeholder to the Coordinator
+    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+    #[serde(untagged)]
+    pub enum FromParticipant {
+        /// Stakeholders can push signatures
+        Sig(Sig),
+        /// Managers can set a spend transaction
+        SetSpend(SetSpendTx),
+        /// Both can fetch signatures
+        GetSigs(GetSigs),
+    }
 }
 
 /// Cosigning Server
