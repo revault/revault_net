@@ -6,15 +6,47 @@
 //! Please find the specification at
 //! https://github.com/re-vault/practical-revault/blob/master/messages.md
 
-/// Watchtower
+use serde::{Deserialize, Serialize};
+
+/// A JSON request object that conforms to the specification in practical-revault
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+pub struct Request<'a, RevaultRequest> {
+    /// Method name as in practical-revault
+    pub method: &'a str,
+    /// Parameters encapsulated with the associated message struct
+    pub params: RevaultRequest,
+}
+
+/// A JSON response object that conforms to the specification in practical-revault
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+pub struct Response<RevaultResponse> {
+    /// Result of the response message
+    pub result: RevaultResponse,
+}
+
+macro_rules! impl_to_request {
+    ($message_struct:ident, $message_name:literal) => {
+        impl From<$message_struct> for Request<'_, $message_struct> {
+            fn from(msg: $message_struct) -> Self {
+                Self {
+                    method: $message_name,
+                    params: msg,
+                }
+            }
+        }
+    };
+}
+
+/// Messages related to the communication with the Watchtower(s)
 pub mod watchtower {
+    use super::{Deserialize, Request, Serialize};
     use bitcoin::{
         hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
         OutPoint,
     };
-    use serde::{Deserialize, Serialize};
     use std::collections::BTreeMap;
+    use std::convert::From;
 
     /// Message from a stakeholder to share all signatures for a revocation
     /// transaction with its watchtower.
@@ -28,6 +60,7 @@ pub mod watchtower {
         /// Deposit outpoint of this vault
         pub deposit_outpoint: OutPoint,
     }
+    impl_to_request!(Sig, "sig");
 
     /// Message from the watchtower to stakeholder to acknowledge that it has
     /// sufficient signatures and fees to begin guarding the vault with the
@@ -41,16 +74,17 @@ pub mod watchtower {
     }
 }
 
-/// Synchronisation Server
-pub mod server {
+/// Messages related to the communication with the Coordinator
+pub mod coordinator {
+    use super::{Deserialize, Request, Serialize};
     use bitcoin::{
         hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
         OutPoint, Transaction,
     };
     use revault_tx::transactions::{RevaultTransaction, SpendTransaction};
-    use serde::{Deserialize, Serialize};
     use std::collections::BTreeMap;
+    use std::convert::From;
 
     mod serde_tx_hex {
         use revault_tx::bitcoin::{
@@ -98,6 +132,7 @@ pub mod server {
         #[serde(with = "serde_tx_hex")]
         transaction: Transaction,
     }
+    impl_to_request!(SetSpendTx, "set_spend_tx");
 
     impl SetSpendTx {
         /// Create a SetSpendTx message out of a SpendTransaction.
@@ -126,6 +161,7 @@ pub mod server {
         /// spend tx is spending.
         pub deposit_outpoint: OutPoint,
     }
+    impl_to_request!(GetSpendTx, "get_spend_tx");
 
     /// The response to the [GetSpendTx] request.
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -147,6 +183,7 @@ pub mod server {
         /// Txid of the transaction the signature applies to
         pub id: Txid,
     }
+    impl_to_request!(Sig, "sig");
 
     /// Sent by a wallet to retrieve all signatures for a specific transaction
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -154,6 +191,7 @@ pub mod server {
         /// Transaction id
         pub id: Txid,
     }
+    impl_to_request!(GetSigs, "get_sigs");
 
     /// A message sent from a stakeholder to the Coordinator
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -188,10 +226,11 @@ pub mod server {
     }
 }
 
-/// Cosigning Server
+/// Messages related to the communication with the Cosigning Server(s)
 pub mod cosigner {
+    use super::{Deserialize, Request, Serialize};
     use revault_tx::transactions::SpendTransaction;
-    use serde::{Deserialize, Serialize};
+    use std::convert::From;
 
     /// Message from a manager to a cosigning server who will soon attempt to
     /// unvault and spend a vault utxo
@@ -200,6 +239,7 @@ pub mod cosigner {
         /// The partially signed unvault transaction
         pub tx: SpendTransaction,
     }
+    impl_to_request!(SignRequest, "sign");
 
     /// Message returned from the cosigning server to the manager containing
     /// the requested signature
@@ -208,79 +248,6 @@ pub mod cosigner {
         /// Cosigning server's signature for the unvault transaction
         pub tx: Option<SpendTransaction>,
     }
-}
-
-use serde::{Deserialize, Serialize};
-use std::convert::From;
-
-/// A JSON request object that conforms to the specification in practical-revault
-#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-pub struct Request<'a, RevaultRequest> {
-    /// Method name as in practical-revault
-    pub method: &'a str,
-    /// Parameters encapsulated with the associated message struct
-    pub params: RevaultRequest,
-}
-
-impl From<watchtower::Sig> for Request<'_, watchtower::Sig> {
-    fn from(msg: watchtower::Sig) -> Self {
-        Self {
-            method: "sig",
-            params: msg,
-        }
-    }
-}
-
-impl From<server::SetSpendTx> for Request<'_, server::SetSpendTx> {
-    fn from(msg: server::SetSpendTx) -> Self {
-        Self {
-            method: "request_spend",
-            params: msg,
-        }
-    }
-}
-
-impl From<server::GetSpendTx> for Request<'_, server::GetSpendTx> {
-    fn from(msg: server::GetSpendTx) -> Self {
-        Self {
-            method: "get_spend_tx",
-            params: msg,
-        }
-    }
-}
-
-impl From<server::Sig> for Request<'_, server::Sig> {
-    fn from(msg: server::Sig) -> Self {
-        Self {
-            method: "sig",
-            params: msg,
-        }
-    }
-}
-
-impl From<server::GetSigs> for Request<'_, server::GetSigs> {
-    fn from(msg: server::GetSigs) -> Self {
-        Self {
-            method: "get_sigs",
-            params: msg,
-        }
-    }
-}
-
-impl From<cosigner::SignRequest> for Request<'_, cosigner::SignRequest> {
-    fn from(msg: cosigner::SignRequest) -> Self {
-        Self {
-            method: "sign",
-            params: msg,
-        }
-    }
-}
-
-/// A JSON response object that conforms to the specification in practical-revault
-#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-pub struct Response<RevaultResponse> {
-    /// Result of the response message
-    pub result: RevaultResponse,
 }
 
 #[cfg(test)]
@@ -300,8 +267,8 @@ mod tests {
         transactions::{RevaultTransaction, SpendTransaction},
     };
 
+    use super::coordinator;
     use super::cosigner;
-    use super::server;
     use super::watchtower;
 
     fn get_dummy_pubkey() -> PublicKey {
@@ -384,7 +351,7 @@ mod tests {
 
     #[test]
     fn serde_watchtower_get_spend_tx() {
-        let msg = server::GetSpendTx {
+        let msg = coordinator::GetSpendTx {
             deposit_outpoint: OutPoint::from_str(
                 "6a276a96807dd45ceed9cbd6fd48b5edf185623b23339a1643e19e8dcbf2e474:0",
             )
@@ -399,7 +366,7 @@ mod tests {
 
         // Response
         let msg = Response {
-            result: server::SpendTx {
+            result: coordinator::SpendTx {
                 transaction: get_dummy_spend_tx().into_psbt().extract_tx(),
             },
         };
@@ -417,7 +384,7 @@ mod tests {
         let signature = get_dummy_sig();
         let id = Txid::default();
 
-        let msg = server::Sig {
+        let msg = coordinator::Sig {
             pubkey,
             signature,
             id,
@@ -433,7 +400,7 @@ mod tests {
     #[test]
     fn serde_server_get_sigs() {
         let id = Txid::default();
-        let msg = server::GetSigs { id };
+        let msg = coordinator::GetSigs { id };
         let req = Request::from(msg);
         roundtrip!(req);
         assert_str_ser!(
@@ -450,7 +417,7 @@ mod tests {
 
         // With signatures
         let msg = Response {
-            result: server::Sigs { signatures },
+            result: coordinator::Sigs { signatures },
         };
         roundtrip!(msg);
         assert_str_ser!(
@@ -461,7 +428,7 @@ mod tests {
         // Without signatures
         let signatures = BTreeMap::new();
         let msg = Response {
-            result: server::Sigs { signatures },
+            result: coordinator::Sigs { signatures },
         };
         roundtrip!(msg);
         assert_str_ser!(msg, r#"{"result":{"signatures":{}}}"#);
@@ -474,12 +441,12 @@ mod tests {
         )
         .unwrap()];
         let signed_spend_tx = SpendTransaction::from_psbt_str("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").unwrap();
-        let msg = server::SetSpendTx::from_spend_tx(deposit_outpoints, signed_spend_tx);
+        let msg = coordinator::SetSpendTx::from_spend_tx(deposit_outpoints, signed_spend_tx);
         let req = Request::from(msg);
         roundtrip!(req);
         assert_str_ser!(
             req,
-            r#"{"method":"request_spend","params":{"deposit_outpoints":["6e4977728e7100db80c30751f27cf834b7a1e02d083a4338874e48d1f3694446:0"],"transaction":"020000000001042a9eb96ed62b3a35883fe632def858e8b80c946ea45f18b364138dfe14dcd70e00000000005ed000003a33ec03af230cf5ae463c2b645f003753bfb06da807b02b89428932cacfaa2301000000005ed000001d9b05aa32106ebb6cf12aefa1115c541b61847aa97823a04be4b77740bfcafc00000000005ed00000e10a83edae847b148100f166ddd65428df8232842df9c26c4ed584313004dc7100000000005ed0000002006f0200000000002200202a3ba224413511e5fc8447c9101d477e2f95db7113ae9fca0b1ef84aac122c605cf6c30000000000000500483045022100a36217e123dea9719dbbc704075dc191f08393537e91ff2630eaf0c7ab89677802207604b290f81148edf8f33c0f84f9aad1391a3513e7a687f721267fc48247adde01473044022055da6db73cf4af14bf8294933dc1b738841c2d6ad371215ceafb61701ac14d9402203626f79d9367ae382041136e52bb378df836b16a97b71c15333bfa3523fbdba701483045022100b2a1b4559bca2719b4abaa7c172329f97b198d5eda2d944d24b684cb42291232022038d74603e78e8e35e02adbe08f93ce90d5d407508463f8e425ddd98abe8fda1701ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b26805004730440220194744ced4f4637ba2b351bd2562632e93a0e39cc087702514fc2b7fa2da4c0a0220700803ec7e681b1ea31b6463711912dc70bad7bbf50b9f3e063c942a8c1bfe72014730440220216306533836fccc08f07cd8ede702f7ef283539943dc10b93576892ed807217022019bd34f280f74578331377b15cb0f3184d30b2ddb87edd79a0bc63db17aa726b0147304402203a24c13039e1a5abdd8d22dc44036b415b96a4a6cf449145f5bcc89a48cf32af022052c6a253de2c38e41fff9cf16f4869a78e07535ec5806a2ff3f985cb7993fbe201ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b2680500483045022100bea60c83db41973c639d42cd3525efe82b15456bfba0a904fb77ccb8a8e054cb02206498d4a777c56f943f388eb0f1d765ee8395d1c2e781486d0dd4f0700adc8f0901473044022052ebc8f31d96bd172f2491cd85b0ef9b4aa1f2408e185781cd57a550d7b4f463022069f9e78d039665d5a53c13752d1719e567928c465219a64aa7ee5bc89578b4ad01483045022100b29bf7526aab5fad36f77ecd628352afc12d00c32a0747ad91dd61aae767e4d2022023f0c040ee84caf653d541d8b5f1ac6472e52199056112d99d3a739e57bfaac501ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b2680500483045022100af1f4b2c3455b044970e8bf62c9e75b4b3e87b5bac7af3b3e33a101e3eebed7202204c377b3764a7dfeccb2f82af327eb23dbf408ae48284a1a7206f43dc04a0b39701483045022100f221ee515d63aef0f27545b736367d0d1ae3ce4433b8818686587decc048b1cc0220536fdfb7470dcd28db813d0efcc2acb364a4d1eece7afcdc9510525993f7487401483045022100faca69e1e8c7b969f0ca666a358693b6bac50b9c02c3722dc2d27a0ccc664563022006ce6039bfcae8a28d74b3d584c37723b466983a4c0ccb63591df74185850a5101ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b26800000000"}}"#
+            r#"{"method":"set_spend_tx","params":{"deposit_outpoints":["6e4977728e7100db80c30751f27cf834b7a1e02d083a4338874e48d1f3694446:0"],"transaction":"020000000001042a9eb96ed62b3a35883fe632def858e8b80c946ea45f18b364138dfe14dcd70e00000000005ed000003a33ec03af230cf5ae463c2b645f003753bfb06da807b02b89428932cacfaa2301000000005ed000001d9b05aa32106ebb6cf12aefa1115c541b61847aa97823a04be4b77740bfcafc00000000005ed00000e10a83edae847b148100f166ddd65428df8232842df9c26c4ed584313004dc7100000000005ed0000002006f0200000000002200202a3ba224413511e5fc8447c9101d477e2f95db7113ae9fca0b1ef84aac122c605cf6c30000000000000500483045022100a36217e123dea9719dbbc704075dc191f08393537e91ff2630eaf0c7ab89677802207604b290f81148edf8f33c0f84f9aad1391a3513e7a687f721267fc48247adde01473044022055da6db73cf4af14bf8294933dc1b738841c2d6ad371215ceafb61701ac14d9402203626f79d9367ae382041136e52bb378df836b16a97b71c15333bfa3523fbdba701483045022100b2a1b4559bca2719b4abaa7c172329f97b198d5eda2d944d24b684cb42291232022038d74603e78e8e35e02adbe08f93ce90d5d407508463f8e425ddd98abe8fda1701ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b26805004730440220194744ced4f4637ba2b351bd2562632e93a0e39cc087702514fc2b7fa2da4c0a0220700803ec7e681b1ea31b6463711912dc70bad7bbf50b9f3e063c942a8c1bfe72014730440220216306533836fccc08f07cd8ede702f7ef283539943dc10b93576892ed807217022019bd34f280f74578331377b15cb0f3184d30b2ddb87edd79a0bc63db17aa726b0147304402203a24c13039e1a5abdd8d22dc44036b415b96a4a6cf449145f5bcc89a48cf32af022052c6a253de2c38e41fff9cf16f4869a78e07535ec5806a2ff3f985cb7993fbe201ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b2680500483045022100bea60c83db41973c639d42cd3525efe82b15456bfba0a904fb77ccb8a8e054cb02206498d4a777c56f943f388eb0f1d765ee8395d1c2e781486d0dd4f0700adc8f0901473044022052ebc8f31d96bd172f2491cd85b0ef9b4aa1f2408e185781cd57a550d7b4f463022069f9e78d039665d5a53c13752d1719e567928c465219a64aa7ee5bc89578b4ad01483045022100b29bf7526aab5fad36f77ecd628352afc12d00c32a0747ad91dd61aae767e4d2022023f0c040ee84caf653d541d8b5f1ac6472e52199056112d99d3a739e57bfaac501ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b2680500483045022100af1f4b2c3455b044970e8bf62c9e75b4b3e87b5bac7af3b3e33a101e3eebed7202204c377b3764a7dfeccb2f82af327eb23dbf408ae48284a1a7206f43dc04a0b39701483045022100f221ee515d63aef0f27545b736367d0d1ae3ce4433b8818686587decc048b1cc0220536fdfb7470dcd28db813d0efcc2acb364a4d1eece7afcdc9510525993f7487401483045022100faca69e1e8c7b969f0ca666a358693b6bac50b9c02c3722dc2d27a0ccc664563022006ce6039bfcae8a28d74b3d584c37723b466983a4c0ccb63591df74185850a5101ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b26800000000"}}"#
         );
     }
 
