@@ -42,7 +42,7 @@ impl error::Error for NoiseError {}
 /// An error enum for revault_net functionality
 #[derive(Debug)]
 pub enum Error {
-    /// Error while using noise API
+    /// Noise protocol related error
     Noise(NoiseError),
     /// Transport error
     Transport(std::io::Error),

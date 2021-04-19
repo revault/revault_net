@@ -13,9 +13,9 @@ use crate::{
         KK_MSG_2_SIZE, NOISE_MESSAGE_HEADER_SIZE,
     },
 };
-use std::io::{ErrorKind, Read, Write};
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::{thread, time::Duration};
+use std::time::Duration;
 
 /// Wrapper type for a TcpStream and KKChannel that automatically enforces authenticated and
 /// encrypted channels when communicating
@@ -76,29 +76,32 @@ impl KKTransport {
         Ok(KKTransport { stream, channel })
     }
 
+    // Read an encrypted Noise message from the communication channel
+    fn read(&mut self) -> Result<Vec<u8>, Error> {
+        let mut cypherheader = [0u8; NOISE_MESSAGE_HEADER_SIZE];
+        self.stream.read_exact(&mut cypherheader)?;
+        let msg_len = self
+            .channel
+            .decrypt_header(&NoiseEncryptedHeader(cypherheader))?;
+
+        // Note that `msg_len` cannot be > 65K (2 bytes)
+        let mut cypherbody = vec![0u8; msg_len as usize];
+        self.stream.read_exact(&mut cypherbody)?;
+        self.channel
+            .decrypt_message(&NoiseEncryptedMessage(cypherbody))
+            .map_err(|e| e.into())
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[allow(missing_docs)]
+    pub fn pubread(&mut self) -> Result<Vec<u8>, Error> {
+        self.read()
+    }
+
     // Encrypt and write a message to the communication channel
     fn write(&mut self, msg: &[u8]) -> Result<(), Error> {
         let encrypted_msg = self.channel.encrypt_message(msg)?.0;
-        let mut attempts = 0;
-        // FIXME: use a write() loop storing the number of bytes written instead of
-        // re-writing the same message with write_all!!
-        loop {
-            match self.stream.write_all(&encrypted_msg) {
-                Ok(n) => return Ok(n),
-                // write_all returns the first error of non-ErrorKind::Interrupted kind that
-                // write returns, in which case no bytes were written to the writer, and can
-                // try again. Here we try up to 5 times.
-                Err(e) => {
-                    attempts += 1;
-                    if attempts == 5 {
-                        return Err(Error::from(e));
-                    } else {
-                        thread::sleep(Duration::from_secs(1));
-                        continue;
-                    }
-                }
-            }
-        }
+        self.stream.write_all(&encrypted_msg).map_err(|e| e.into())
     }
 
     #[cfg(feature = "fuzz")]
@@ -152,57 +155,6 @@ impl KKTransport {
         }
 
         Ok(())
-    }
-
-    /// Read a message from the other end of the encrypted communication channel.
-    fn _read(&mut self) -> Result<Vec<u8>, Error> {
-        let mut cypherheader = [0u8; NOISE_MESSAGE_HEADER_SIZE];
-        self.stream.read_exact(&mut cypherheader)?;
-        let msg_len = self
-            .channel
-            .decrypt_header(&NoiseEncryptedHeader(cypherheader))?;
-
-        // Note that `msg_len` cannot be > 65K (2 bytes)
-        let mut cypherbody = vec![0u8; msg_len as usize];
-        self.stream.read_exact(&mut cypherbody)?;
-        self.channel
-            .decrypt_message(&NoiseEncryptedMessage(cypherbody))
-            .map_err(|e| e.into())
-    }
-
-    /// Read a message from the other end of the encrypted communication channel.
-    /// Will recover from certain kinds of error, those for which no bytes are
-    /// read from the stream, by retrying up to 5 times with a 1s sleep between
-    /// attempts. After 5 attempts, or an unrecoverable error, will return an
-    /// error.
-    fn read(&mut self) -> Result<Vec<u8>, Error> {
-        let mut attempts = 0;
-        // FIXME: use a read() loop storing the number of bytes written instead of
-        // re-reading the same message each time!!
-        loop {
-            match self._read() {
-                Ok(msg) => return Ok(msg),
-                Err(error) => match error {
-                    e if attempts == 4 => return Err(e),
-                    Error::Transport(e) => match e.kind() {
-                        ErrorKind::UnexpectedEof => return Err(Error::Transport(e)),
-                        ErrorKind::Interrupted => return Err(Error::Transport(e)),
-                        _ => {
-                            thread::sleep(Duration::from_secs(1));
-                            continue;
-                        }
-                    },
-                    e => e,
-                },
-            };
-            attempts += 1;
-        }
-    }
-
-    #[cfg(feature = "fuzz")]
-    #[allow(missing_docs)]
-    pub fn pubread(&mut self) -> Result<Vec<u8>, Error> {
-        self.read()
     }
 
     /// Get the static public key of the peer
