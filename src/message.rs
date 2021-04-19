@@ -10,11 +10,11 @@ use serde::{Deserialize, Serialize};
 
 /// A JSON request object that conforms to the specification in practical-revault
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-pub struct Request<'a, RevaultRequest> {
+pub struct Request<'a, T> {
     /// Method name as in practical-revault
     method: &'a str,
     /// Parameters encapsulated with the associated message struct
-    params: RevaultRequest,
+    params: T,
 }
 
 /// A JSON response object that conforms to the specification in practical-revault

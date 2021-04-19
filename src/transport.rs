@@ -136,6 +136,16 @@ impl KKTransport {
         Ok(resp.result)
     }
 
+    // DRY helper to write a response to the communication channel
+    fn _write_resp<Rp>(&mut self, resp: &Rp) -> Result<(), Error>
+    where
+        Rp: serde::ser::Serialize,
+    {
+        let raw_resp = serde_json::to_vec(&resp)?;
+        log::trace!("Sending response: '{}'", String::from_utf8_lossy(&raw_resp));
+        self.write(&raw_resp)
+    }
+
     /// Read a request from the other end of the encrypted channel.
     pub fn read_req<Rq, Rp, F>(&mut self, response_cb: F) -> Result<(), Error>
     where
@@ -148,10 +158,28 @@ impl KKTransport {
         let req: message::Request<_> = serde_json::from_slice(&raw_req)?;
 
         // FIXME: there should always be a response!
-        if let Some(resp) = response_cb(req) {
-            let raw_resp = serde_json::to_vec(&resp)?;
-            log::trace!("Sending response: '{}'", String::from_utf8_lossy(&raw_resp));
-            self.write(&raw_resp)?;
+        if let Some(ref resp) = response_cb(req) {
+            self._write_resp(resp)?;
+        }
+
+        Ok(())
+    }
+
+    /// This is the async version of [read_req]
+    pub async fn read_req_async<Rq, Rp, F, Fut>(&mut self, response_cb: F) -> Result<(), Error>
+    where
+        Rq: serde::de::DeserializeOwned,
+        Rp: serde::ser::Serialize,
+        F: FnOnce(Rq) -> Fut,
+        Fut: std::future::Future<Output = Option<Rp>>
+    {
+        let raw_req = self.read()?;
+        log::trace!("Read request: '{}'", String::from_utf8_lossy(&raw_req));
+        let req: message::Request<_> = serde_json::from_slice(&raw_req)?;
+
+        // FIXME: there should always be a response!
+        if let Some(ref resp) = response_cb(req.params()).await {
+            self._write_resp(resp)?;
         }
 
         Ok(())
