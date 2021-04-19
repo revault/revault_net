@@ -37,9 +37,19 @@ macro_rules! impl_to_request {
     };
 }
 
+macro_rules! impl_to_response {
+    ($message_struct:ident) => {
+        impl From<$message_struct> for Response<$message_struct> {
+            fn from(msg: $message_struct) -> Self {
+                Self { result: msg }
+            }
+        }
+    };
+}
+
 /// Messages related to the communication with the Watchtower(s)
 pub mod watchtower {
-    use super::{Deserialize, Request, Serialize};
+    use super::{Deserialize, Request, Response, Serialize};
     use bitcoin::{
         hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
@@ -72,11 +82,12 @@ pub mod watchtower {
         /// Revocation transaction id
         pub txid: Txid,
     }
+    impl_to_response!(SigAck);
 }
 
 /// Messages related to the communication with the Coordinator
 pub mod coordinator {
-    use super::{Deserialize, Request, Serialize};
+    use super::{Deserialize, Request, Response, Serialize};
     use bitcoin::{
         hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
@@ -121,6 +132,7 @@ pub mod coordinator {
         /// transaction.
         pub signatures: BTreeMap<PublicKey, Signature>,
     }
+    impl_to_response!(Sigs);
 
     /// Sent by a manager to advertise the spend transaction that will eventually
     /// be used for a specific unvault.
@@ -171,6 +183,7 @@ pub mod coordinator {
         #[serde(with = "serde_tx_hex")]
         pub transaction: Transaction,
     }
+    impl_to_response!(SpendTx);
 
     /// Message from a stakeholder client to sync server to share (at any time)
     /// the signature for a revocation transaction with all participants.
@@ -228,7 +241,7 @@ pub mod coordinator {
 
 /// Messages related to the communication with the Cosigning Server(s)
 pub mod cosigner {
-    use super::{Deserialize, Request, Serialize};
+    use super::{Deserialize, Request, Response, Serialize};
     use revault_tx::transactions::SpendTransaction;
     use std::convert::From;
 
@@ -248,6 +261,7 @@ pub mod cosigner {
         /// Cosigning server's signature for the unvault transaction
         pub tx: Option<SpendTransaction>,
     }
+    impl_to_response!(SignResponse);
 }
 
 #[cfg(test)]
