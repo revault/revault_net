@@ -6,6 +6,7 @@
 
 use crate::{
     error::Error,
+    message,
     noise::{
         KKChannel, KKHandshakeActOne, KKHandshakeActTwo, KKMessageActOne, KKMessageActTwo,
         NoiseEncryptedHeader, NoiseEncryptedMessage, PublicKey, SecretKey, KK_MSG_1_SIZE,
@@ -75,11 +76,12 @@ impl KKTransport {
         Ok(KKTransport { stream, channel })
     }
 
-    /// Write a message to the other end of the encrypted communication channel. Attempts
-    /// to recover from certain kinds of error.
-    pub fn write(&mut self, msg: &[u8]) -> Result<(), Error> {
+    // Encrypt and write a message to the communication channel
+    fn write(&mut self, msg: &[u8]) -> Result<(), Error> {
         let encrypted_msg = self.channel.encrypt_message(msg)?.0;
         let mut attempts = 0;
+        // FIXME: use a write() loop storing the number of bytes written instead of
+        // re-writing the same message with write_all!!
         loop {
             match self.stream.write_all(&encrypted_msg) {
                 Ok(n) => return Ok(n),
@@ -97,6 +99,59 @@ impl KKTransport {
                 }
             }
         }
+    }
+
+    #[cfg(feature = "fuzz")]
+    #[allow(missing_docs)]
+    pub fn pubwrite(&mut self, msg: &[u8]) -> Result<(), Error> {
+        self.write(msg)
+    }
+
+    // TODO: this should be a higher level method once we have a response for all requests and
+    // return a Response directly.
+    /// Send a request to the other end of the encrypted channel.
+    pub fn send_req<T: serde::ser::Serialize>(
+        &mut self,
+        req: &message::Request<T>,
+    ) -> Result<(), Error> {
+        let raw_req = serde_json::to_vec(req)?;
+        log::trace!("Sending request: '{}'", String::from_utf8_lossy(&raw_req));
+
+        self.write(&raw_req)
+    }
+
+    // TODO: this should be merged with send_req
+    /// Read a response to a request from the other end of the encrypted channel.
+    pub fn read_resp<T>(&mut self) -> Result<T, Error>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let raw_resp = self.read()?;
+        log::trace!("Read response: '{}'", String::from_utf8_lossy(&raw_resp));
+
+        let resp: message::Response<T> = serde_json::from_slice(&raw_resp)?;
+        Ok(resp.result)
+    }
+
+    /// Read a request from the other end of the encrypted channel.
+    pub fn read_req<Rq, Rp, F>(&mut self, response_cb: F) -> Result<(), Error>
+    where
+        Rq: serde::de::DeserializeOwned,
+        Rp: serde::ser::Serialize,
+        F: FnOnce(message::Request<Rq>) -> Option<message::Response<Rp>>,
+    {
+        let raw_req = self.read()?;
+        log::trace!("Read request: '{}'", String::from_utf8_lossy(&raw_req));
+        let req: message::Request<_> = serde_json::from_slice(&raw_req)?;
+
+        // FIXME: there should always be a response!
+        if let Some(resp) = response_cb(req) {
+            let raw_resp = serde_json::to_vec(&resp)?;
+            log::trace!("Sending response: '{}'", String::from_utf8_lossy(&raw_resp));
+            self.write(&raw_resp)?;
+        }
+
+        Ok(())
     }
 
     /// Read a message from the other end of the encrypted communication channel.
@@ -119,9 +174,11 @@ impl KKTransport {
     /// Will recover from certain kinds of error, those for which no bytes are
     /// read from the stream, by retrying up to 5 times with a 1s sleep between
     /// attempts. After 5 attempts, or an unrecoverable error, will return an
-    /// error.  
-    pub fn read(&mut self) -> Result<Vec<u8>, Error> {
+    /// error.
+    fn read(&mut self) -> Result<Vec<u8>, Error> {
         let mut attempts = 0;
+        // FIXME: use a read() loop storing the number of bytes written instead of
+        // re-reading the same message each time!!
         loop {
             match self._read() {
                 Ok(msg) => return Ok(msg),
@@ -142,6 +199,12 @@ impl KKTransport {
         }
     }
 
+    #[cfg(feature = "fuzz")]
+    #[allow(missing_docs)]
+    pub fn pubread(&mut self) -> Result<Vec<u8>, Error> {
+        self.read()
+    }
+
     /// Get the static public key of the peer
     pub fn remote_static(&self) -> PublicKey {
         self.channel.remote_static()
@@ -152,7 +215,7 @@ impl KKTransport {
 mod tests {
     use super::*;
     use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::gen_keypair;
-    use std::thread;
+    use std::{collections::BTreeMap, str::FromStr, thread};
 
     #[test]
     fn test_transport_kk() {
@@ -182,5 +245,59 @@ mod tests {
         let sent_msg = cli_thread.join().unwrap();
         let received_msg = server_transport.read().unwrap();
         assert_eq!(sent_msg.to_vec(), received_msg);
+    }
+
+    // Send a get_sigs from a client and get back a sigs
+    #[test]
+    fn rw_sanity_check() {
+        let ((client_pubkey, client_privkey), (server_pubkey, server_privkey)) =
+            (gen_keypair(), gen_keypair());
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let id = bitcoin::Txid::from_str(
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap();
+        let req = message::coordinator::GetSigs { id };
+        let req_str = r#"{"method":"get_sigs","params":{"id":"0000000000000000000000000000000000000000000000000000000000000000"}}"#;
+
+        let mut signatures = BTreeMap::new();
+        let pubkey = bitcoin::PublicKey::from_str(
+            "035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c",
+        )
+        .unwrap();
+        let sig = bitcoin::secp256k1::Signature::from_str("3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2").unwrap();
+        signatures.insert(pubkey.key, sig);
+        let resp = message::coordinator::Sigs { signatures };
+        // Note how it does not contain 'result'
+        let resp_str = r#"{"signatures":{"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c":"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2"}}"#;
+
+        let cli_thread = thread::spawn(move || {
+            let my_noise_privkey = client_privkey;
+            let their_noise_pubkey = server_pubkey;
+
+            let mut cli_channel =
+                KKTransport::connect(addr, &my_noise_privkey, &their_noise_pubkey)
+                    .expect("Client channel connecting");
+            cli_channel.send_req(&req.into()).expect("Sending get_sigs");
+            let resp = cli_channel
+                .read_resp::<message::coordinator::Sigs>()
+                .expect("Reading response");
+            assert_eq!(serde_json::to_string(&resp).unwrap(), resp_str.to_string());
+        });
+
+        let mut server_transport =
+            KKTransport::accept(&listener, &server_privkey, &[client_pubkey])
+                .expect("Server channel binding and accepting");
+        server_transport
+            .read_req::<message::coordinator::GetSigs, message::coordinator::Sigs, _>(|req| {
+                assert_eq!(serde_json::to_string(&req).unwrap(), req_str.to_string());
+                Some(resp.into())
+            })
+            .expect("Reading request");
+
+        cli_thread.join().unwrap();
     }
 }

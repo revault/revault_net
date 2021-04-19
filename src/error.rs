@@ -46,6 +46,8 @@ pub enum Error {
     Noise(NoiseError),
     /// Transport error
     Transport(std::io::Error),
+    /// JSON serialization / deserialization error.
+    Json(serde_json::Error),
 }
 
 impl fmt::Display for Error {
@@ -53,6 +55,7 @@ impl fmt::Display for Error {
         match *self {
             Error::Noise(ref e) => write!(f, "Noise Error: {}", e),
             Error::Transport(ref e) => write!(f, "Transport Error: {}", e),
+            Error::Json(ref e) => write!(f, "Json error: '{}'", e),
         }
     }
 }
@@ -68,5 +71,11 @@ impl From<std::io::Error> for Error {
 impl From<NoiseError> for Error {
     fn from(error: NoiseError) -> Self {
         Self::Noise(error)
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Json(error)
     }
 }
