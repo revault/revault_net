@@ -12,9 +12,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 pub struct Request<'a, RevaultRequest> {
     /// Method name as in practical-revault
-    pub method: &'a str,
+    method: &'a str,
     /// Parameters encapsulated with the associated message struct
-    pub params: RevaultRequest,
+    params: RevaultRequest,
 }
 
 /// A JSON response object that conforms to the specification in practical-revault
