@@ -113,11 +113,8 @@ impl KKTransport {
     // TODO: this should be a higher level method once we have a response for all requests and
     // return a Response directly.
     /// Send a request to the other end of the encrypted channel.
-    pub fn send_req<T: serde::ser::Serialize>(
-        &mut self,
-        req: &message::Request<T>,
-    ) -> Result<(), Error> {
-        let raw_req = serde_json::to_vec(req)?;
+    pub fn send_req(&mut self, req: &message::Request) -> Result<(), Error> {
+        let raw_req = serde_json::to_vec(&req)?;
         log::trace!("Sending request: '{}'", String::from_utf8_lossy(&raw_req));
 
         self.write(&raw_req)
@@ -137,49 +134,45 @@ impl KKTransport {
     }
 
     // DRY helper to write a response to the communication channel
-    fn _write_resp<Rp>(&mut self, resp: &Rp) -> Result<(), Error>
-    where
-        Rp: serde::ser::Serialize,
-    {
+    fn _write_resp<T: serde::ser::Serialize>(
+        &mut self,
+        resp: &message::Response<T>,
+    ) -> Result<(), Error> {
         let raw_resp = serde_json::to_vec(&resp)?;
         log::trace!("Sending response: '{}'", String::from_utf8_lossy(&raw_resp));
         self.write(&raw_resp)
     }
 
     /// Read a request from the other end of the encrypted channel.
-    pub fn read_req<Rq, Rp, F>(&mut self, response_cb: F) -> Result<(), Error>
+    pub fn read_req<F>(&mut self, response_cb: F) -> Result<(), Error>
     where
-        Rq: serde::de::DeserializeOwned,
-        Rp: serde::ser::Serialize,
-        F: FnOnce(message::Request<Rq>) -> Option<message::Response<Rp>>,
+        F: FnOnce(message::RequestParams) -> Option<message::ResponseResult>,
     {
         let raw_req = self.read()?;
         log::trace!("Read request: '{}'", String::from_utf8_lossy(&raw_req));
-        let req: message::Request<_> = serde_json::from_slice(&raw_req)?;
+        let req: message::Request = serde_json::from_slice(&raw_req)?;
 
         // FIXME: there should always be a response!
-        if let Some(ref resp) = response_cb(req) {
-            self._write_resp(resp)?;
+        if let Some(result) = response_cb(req.params()) {
+            self._write_resp(&message::Response { result })?;
         }
 
         Ok(())
     }
 
     /// This is the async version of [read_req]
-    pub async fn read_req_async<Rq, Rp, F, Fut>(&mut self, response_cb: F) -> Result<(), Error>
+    pub async fn read_req_async<F, Fut>(&mut self, response_cb: F) -> Result<(), Error>
     where
-        Rq: serde::de::DeserializeOwned,
-        Rp: serde::ser::Serialize,
-        F: FnOnce(Rq) -> Fut,
-        Fut: std::future::Future<Output = Option<Rp>>
+        F: FnOnce(message::RequestParams) -> Fut,
+        Fut: std::future::Future<Output = Option<message::ResponseResult>>,
     {
         let raw_req = self.read()?;
         log::trace!("Read request: '{}'", String::from_utf8_lossy(&raw_req));
-        let req: message::Request<_> = serde_json::from_slice(&raw_req)?;
+        let req: message::Request = serde_json::from_slice(&raw_req)?;
 
         // FIXME: there should always be a response!
-        if let Some(ref resp) = response_cb(req.params()).await {
-            self._write_resp(resp)?;
+        if let Some(result) = response_cb(req.params()).await {
+            self._write_resp(&message::Response { result })?;
         }
 
         Ok(())
@@ -241,7 +234,8 @@ mod tests {
         )
         .unwrap();
         let req = message::coordinator::GetSigs { id };
-        let req_str = r#"{"method":"get_sigs","params":{"id":"0000000000000000000000000000000000000000000000000000000000000000"}}"#;
+        let params_str =
+            r#"{"id":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
 
         let mut signatures = BTreeMap::new();
         let pubkey = bitcoin::PublicKey::from_str(
@@ -262,9 +256,8 @@ mod tests {
                 KKTransport::connect(addr, &my_noise_privkey, &their_noise_pubkey)
                     .expect("Client channel connecting");
             cli_channel.send_req(&req.into()).expect("Sending get_sigs");
-            let resp = cli_channel
-                .read_resp::<message::coordinator::Sigs>()
-                .expect("Reading response");
+            let resp: message::coordinator::Sigs =
+                cli_channel.read_resp().expect("Reading response");
             assert_eq!(serde_json::to_string(&resp).unwrap(), resp_str.to_string());
         });
 
@@ -272,9 +265,12 @@ mod tests {
             KKTransport::accept(&listener, &server_privkey, &[client_pubkey])
                 .expect("Server channel binding and accepting");
         server_transport
-            .read_req::<message::coordinator::GetSigs, message::coordinator::Sigs, _>(|req| {
-                assert_eq!(serde_json::to_string(&req).unwrap(), req_str.to_string());
-                Some(resp.into())
+            .read_req(|params| {
+                assert_eq!(
+                    serde_json::to_string(&params).unwrap(),
+                    params_str.to_string()
+                );
+                Some(message::ResponseResult::Sigs(resp))
             })
             .expect("Reading request");
 
