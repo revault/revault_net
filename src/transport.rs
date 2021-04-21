@@ -27,12 +27,15 @@ pub struct KKTransport {
 
 impl KKTransport {
     /// Connect to server at given address, and enact Noise handshake with given private key.
+    /// Sets a read timeout of 20 seconds.
     pub fn connect(
         addr: SocketAddr,
         my_noise_privkey: &SecretKey,
         their_noise_pubkey: &PublicKey,
     ) -> Result<KKTransport, Error> {
-        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
+        let timeout = Duration::from_secs(20);
+        let mut stream = TcpStream::connect_timeout(&addr, timeout)?;
+        stream.set_read_timeout(Some(timeout))?;
 
         let (cli_act_1, msg_1) =
             KKHandshakeActOne::initiator(my_noise_privkey, their_noise_pubkey)?;
@@ -110,26 +113,19 @@ impl KKTransport {
         self.write(msg)
     }
 
-    // TODO: this should be a higher level method once we have a response for all requests and
-    // return a Response directly.
-    /// Send a request to the other end of the encrypted channel.
-    pub fn send_req(&mut self, req: &message::Request) -> Result<(), Error> {
-        let raw_req = serde_json::to_vec(&req)?;
-        log::trace!("Sending request: '{}'", String::from_utf8_lossy(&raw_req));
-
-        self.write(&raw_req)
-    }
-
-    // TODO: this should be merged with send_req
-    /// Read a response to a request from the other end of the encrypted channel.
-    pub fn read_resp<T>(&mut self) -> Result<T, Error>
+    /// Send a request to the other end of the encrypted channel, and return their response.
+    pub fn send_req<T>(&mut self, req: &message::Request) -> Result<T, Error>
     where
         T: serde::de::DeserializeOwned,
     {
+        let raw_req = serde_json::to_vec(&req)?;
+        log::trace!("Sending request: '{}'", String::from_utf8_lossy(&raw_req));
+        self.write(&raw_req)?;
+
         let raw_resp = self.read()?;
         log::trace!("Read response: '{}'", String::from_utf8_lossy(&raw_resp));
-
         let resp: message::Response<T> = serde_json::from_slice(&raw_resp)?;
+
         Ok(resp.result)
     }
 
@@ -253,9 +249,8 @@ mod tests {
             let mut cli_channel =
                 KKTransport::connect(addr, &my_noise_privkey, &their_noise_pubkey)
                     .expect("Client channel connecting");
-            cli_channel.send_req(&req.into()).expect("Sending get_sigs");
             let resp: message::coordinator::Sigs =
-                cli_channel.read_resp().expect("Reading response");
+                cli_channel.send_req(&req.into()).expect("Sending get_sigs");
             assert_eq!(serde_json::to_string(&resp).unwrap(), resp_str.to_string());
         });
 
