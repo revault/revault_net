@@ -152,7 +152,6 @@ impl KKTransport {
         log::trace!("Read request: '{}'", String::from_utf8_lossy(&raw_req));
         let req: message::Request = serde_json::from_slice(&raw_req)?;
 
-        // FIXME: there should always be a response!
         if let Some(result) = response_cb(req.params()) {
             self._write_resp(&message::Response { result })?;
         }
@@ -170,7 +169,6 @@ impl KKTransport {
         log::trace!("Read request: '{}'", String::from_utf8_lossy(&raw_req));
         let req: message::Request = serde_json::from_slice(&raw_req)?;
 
-        // FIXME: there should always be a response!
         if let Some(result) = response_cb(req.params()).await {
             self._write_resp(&message::Response { result })?;
         }
