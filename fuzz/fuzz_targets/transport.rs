@@ -30,11 +30,11 @@ fn kk_client_server(data: &[u8]) {
     thread::spawn(move || {
         let mut cli_channel = KKTransport::connect(addr, &INIT_PRIVKEY, &RESP_PUBKEY)
             .expect("Client channel connecting");
-        cli_channel.write(&msg_sent).expect("Sending test message");
+        cli_channel.pubwrite(&msg_sent).expect("Sending test message");
     });
 
     let mut serv_transport = KKTransport::accept(&listener, &RESP_PRIVKEY, &[INIT_PUBKEY]).unwrap();
-    if let Ok(msg) = serv_transport.read() {
+    if let Ok(msg) = serv_transport.pubread() {
         assert_eq!(msg, data);
     }
 }

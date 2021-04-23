@@ -8,33 +8,94 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A JSON request object that conforms to the specification in practical-revault
+/// A JSONRPC-like request, as specified in [practical-revault](https://github.com/revault/practical-revault/blob/master/messages.md)
+#[allow(missing_docs)]
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-pub struct Request<'a, RevaultRequest> {
-    /// Method name as in practical-revault
-    pub method: &'a str,
-    /// Parameters encapsulated with the associated message struct
-    pub params: RevaultRequest,
+#[serde(untagged)]
+pub enum Request<'a> {
+    WtSig {
+        method: &'a str,
+        params: watchtower::Sig,
+    },
+    SetSpendTx {
+        method: &'a str,
+        params: coordinator::SetSpendTx,
+    },
+    GetSpendTx {
+        method: &'a str,
+        params: coordinator::GetSpendTx,
+    },
+    CoordSig {
+        method: &'a str,
+        params: coordinator::Sig,
+    },
+    GetSigs {
+        method: &'a str,
+        params: coordinator::GetSigs,
+    },
+    Sign {
+        method: &'a str,
+        params: cosigner::SignRequest,
+    },
 }
 
-/// A JSON response object that conforms to the specification in practical-revault
-#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-pub struct Response<RevaultResponse> {
-    /// Result of the response message
-    pub result: RevaultResponse,
+impl<'a> Request<'a> {
+    /// Get the parameters of this request
+    pub fn params(self) -> RequestParams {
+        match self {
+            Request::WtSig { params, .. } => RequestParams::WtSig(params),
+            Request::SetSpendTx { params, .. } => RequestParams::SetSpendTx(params),
+            Request::GetSpendTx { params, .. } => RequestParams::GetSpendTx(params),
+            Request::CoordSig { params, .. } => RequestParams::CoordSig(params),
+            Request::GetSigs { params, .. } => RequestParams::GetSigs(params),
+            Request::Sign { params, .. } => RequestParams::Sign(params),
+        }
+    }
 }
 
+/// All params types that can possibly be sent through a Request
+#[allow(missing_docs)]
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum RequestParams {
+    WtSig(watchtower::Sig),
+    SetSpendTx(coordinator::SetSpendTx),
+    GetSpendTx(coordinator::GetSpendTx),
+    CoordSig(coordinator::Sig),
+    GetSigs(coordinator::GetSigs),
+    Sign(cosigner::SignRequest),
+}
+
+// Implement From(param type) for a Request
 macro_rules! impl_to_request {
-    ($message_struct:ident, $message_name:literal) => {
-        impl From<$message_struct> for Request<'_, $message_struct> {
-            fn from(msg: $message_struct) -> Self {
-                Self {
+    ($message_struct:ident, $message_name:literal, $enum_variant:ident) => {
+        impl From<$message_struct> for Request<'_> {
+            fn from(params: $message_struct) -> Self {
+                Self::$enum_variant {
                     method: $message_name,
-                    params: msg,
+                    params,
                 }
             }
         }
     };
+}
+
+/// All result types that can possibly be returned by a Response
+#[allow(missing_docs)]
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum ResponseResult {
+    SigAck(watchtower::SigAck),
+    Sigs(coordinator::Sigs),
+    SpendTx(coordinator::SpendTx),
+    SignResult(cosigner::SignResult),
+}
+
+/// A JSONRPC-like response, as specified in [practical-revault](https://github.com/revault/practical-revault/blob/master/messages.md)
+#[allow(missing_docs)]
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+pub struct Response<T> {
+    pub result: T,
 }
 
 /// Messages related to the communication with the Watchtower(s)
@@ -60,7 +121,7 @@ pub mod watchtower {
         /// Deposit outpoint of this vault
         pub deposit_outpoint: OutPoint,
     }
-    impl_to_request!(Sig, "sig");
+    impl_to_request!(Sig, "sig", WtSig);
 
     /// Message from the watchtower to stakeholder to acknowledge that it has
     /// sufficient signatures and fees to begin guarding the vault with the
@@ -132,7 +193,7 @@ pub mod coordinator {
         #[serde(with = "serde_tx_hex")]
         transaction: Transaction,
     }
-    impl_to_request!(SetSpendTx, "set_spend_tx");
+    impl_to_request!(SetSpendTx, "set_spend_tx", SetSpendTx);
 
     impl SetSpendTx {
         /// Create a SetSpendTx message out of a SpendTransaction.
@@ -161,7 +222,7 @@ pub mod coordinator {
         /// spend tx is spending.
         pub deposit_outpoint: OutPoint,
     }
-    impl_to_request!(GetSpendTx, "get_spend_tx");
+    impl_to_request!(GetSpendTx, "get_spend_tx", GetSpendTx);
 
     /// The response to the [GetSpendTx] request.
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -183,7 +244,7 @@ pub mod coordinator {
         /// Txid of the transaction the signature applies to
         pub id: Txid,
     }
-    impl_to_request!(Sig, "sig");
+    impl_to_request!(Sig, "sig", CoordSig);
 
     /// Sent by a wallet to retrieve all signatures for a specific transaction
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -191,39 +252,7 @@ pub mod coordinator {
         /// Transaction id
         pub id: Txid,
     }
-    impl_to_request!(GetSigs, "get_sigs");
-
-    /// A message sent from a stakeholder to the Coordinator
-    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    #[serde(untagged)]
-    pub enum FromStakeholder {
-        /// Stakeholders can push signatures
-        Sig(Sig),
-        /// Stakeholders can fetch signatures
-        GetSigs(GetSigs),
-    }
-
-    /// A message sent from a manager to the Coordinator
-    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    #[serde(untagged)]
-    pub enum FromManager {
-        /// Managers can set a spend transaction
-        SetSpend(SetSpendTx),
-        /// Managers can fetch pre-signed transaction signatures
-        GetSigs(GetSigs),
-    }
-
-    /// A message sent from either a manager or a stakeholder to the Coordinator
-    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    #[serde(untagged)]
-    pub enum FromParticipant {
-        /// Stakeholders can push signatures
-        Sig(Sig),
-        /// Managers can set a spend transaction
-        SetSpend(SetSpendTx),
-        /// Both can fetch signatures
-        GetSigs(GetSigs),
-    }
+    impl_to_request!(GetSigs, "get_sigs", GetSigs);
 }
 
 /// Messages related to the communication with the Cosigning Server(s)
@@ -239,12 +268,12 @@ pub mod cosigner {
         /// The partially signed unvault transaction
         pub tx: SpendTransaction,
     }
-    impl_to_request!(SignRequest, "sign");
+    impl_to_request!(SignRequest, "sign", Sign);
 
     /// Message returned from the cosigning server to the manager containing
     /// the requested signature
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub struct SignResponse {
+    pub struct SignResult {
         /// Cosigning server's signature for the unvault transaction
         pub tx: Option<SpendTransaction>,
     }
@@ -252,7 +281,7 @@ pub mod cosigner {
 
 #[cfg(test)]
 mod tests {
-    use super::{Request, Response};
+    use super::{Request, Response, ResponseResult};
     use std::{collections::BTreeMap, str::FromStr};
 
     use revault_tx::{
@@ -340,7 +369,7 @@ mod tests {
         let ack = true;
         let txid = Txid::default();
         let msg = Response {
-            result: watchtower::SigAck { ack, txid },
+            result: ResponseResult::SigAck(watchtower::SigAck { ack, txid }),
         };
         roundtrip!(msg);
         assert_str_ser!(
@@ -366,9 +395,9 @@ mod tests {
 
         // Response
         let msg = Response {
-            result: coordinator::SpendTx {
+            result: ResponseResult::SpendTx(coordinator::SpendTx {
                 transaction: get_dummy_spend_tx().into_psbt().extract_tx(),
-            },
+            }),
         };
         eprintln!("{}", get_dummy_spend_tx().hex());
         roundtrip!(msg);
@@ -417,7 +446,7 @@ mod tests {
 
         // With signatures
         let msg = Response {
-            result: coordinator::Sigs { signatures },
+            result: ResponseResult::Sigs(coordinator::Sigs { signatures }),
         };
         roundtrip!(msg);
         assert_str_ser!(
@@ -428,7 +457,7 @@ mod tests {
         // Without signatures
         let signatures = BTreeMap::new();
         let msg = Response {
-            result: coordinator::Sigs { signatures },
+            result: ResponseResult::Sigs(coordinator::Sigs { signatures }),
         };
         roundtrip!(msg);
         assert_str_ser!(msg, r#"{"result":{"signatures":{}}}"#);
@@ -462,7 +491,7 @@ mod tests {
         );
 
         let tx = Some(get_dummy_spend_tx());
-        let msg = cosigner::SignResponse { tx };
+        let msg = cosigner::SignResult { tx };
         roundtrip!(msg);
         assert_str_ser!(
             msg,
@@ -470,7 +499,7 @@ mod tests {
         );
 
         let msg = Response {
-            result: cosigner::SignResponse { tx: None },
+            result: ResponseResult::SignResult(cosigner::SignResult { tx: None }),
         };
         roundtrip!(msg);
         assert_str_ser!(msg, r#"{"result":{"tx":null}}"#);

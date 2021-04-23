@@ -15,6 +15,7 @@ sodiumoxide = { version = "0.2", features = ["serde"] }
 
 [dependencies.revault_net]
 path = ".."
+features = ["fuzz"]
 
 # Prevent this from interfering with workspaces
 [workspace]
