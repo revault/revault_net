@@ -85,8 +85,10 @@ macro_rules! impl_to_request {
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ResponseResult {
-    SigAck(watchtower::SigAck),
+    WtSig(watchtower::SigResult),
     Sigs(coordinator::Sigs),
+    Sig(coordinator::SigResult),
+    SetSpend(coordinator::SetSpendResult),
     SpendTx(coordinator::SpendTx),
     SignResult(cosigner::SignResult),
 }
@@ -127,9 +129,10 @@ pub mod watchtower {
     /// sufficient signatures and fees to begin guarding the vault with the
     /// revocation transaction
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub struct SigAck {
+    pub struct SigResult {
         /// Result of acknowledgement
         pub ack: bool,
+        // FIXME: we don't need it anymore once we have ids in messages
         /// Revocation transaction id
         pub txid: Txid,
     }
@@ -173,6 +176,14 @@ pub mod coordinator {
         }
     }
 
+    /// Sent by a wallet to retrieve all signatures for a specific transaction
+    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+    pub struct GetSigs {
+        /// Transaction id
+        pub id: Txid,
+    }
+    impl_to_request!(GetSigs, "get_sigs", GetSigs);
+
     /// Message response to get_sigs from sync server to wallet client with a
     /// (potentially incomplete) mapping of each public key to each signature
     /// required to verify this **usual** transaction
@@ -214,6 +225,14 @@ pub mod coordinator {
         }
     }
 
+    /// Response to [SetSpendTx] by the coordinator, `ack` is `true` if it claims to have
+    /// succesfully stored the Spend tx.
+    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+    pub struct SetSpendResult {
+        /// Result of acknowledgement
+        pub ack: bool,
+    }
+
     /// Sent by a watchtower to the synchronisation server after an unvault
     /// event to learn about the spend transaction.
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -246,13 +265,13 @@ pub mod coordinator {
     }
     impl_to_request!(Sig, "sig", CoordSig);
 
-    /// Sent by a wallet to retrieve all signatures for a specific transaction
+    /// Response to [SigResult] by the coordinator, `ack` is `true` if it claims to have
+    /// succesfully stored the Spend tx.
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub struct GetSigs {
-        /// Transaction id
-        pub id: Txid,
+    pub struct SigResult {
+        /// Result of acknowledgement
+        pub ack: bool,
     }
-    impl_to_request!(GetSigs, "get_sigs", GetSigs);
 }
 
 /// Messages related to the communication with the Cosigning Server(s)
@@ -369,7 +388,7 @@ mod tests {
         let ack = true;
         let txid = Txid::default();
         let msg = Response {
-            result: ResponseResult::SigAck(watchtower::SigAck { ack, txid }),
+            result: ResponseResult::WtSig(watchtower::SigResult { ack, txid }),
         };
         roundtrip!(msg);
         assert_str_ser!(
@@ -424,6 +443,15 @@ mod tests {
             req,
             r#"{"method":"sig","params":{"pubkey":"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c","signature":"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2","id":"0000000000000000000000000000000000000000000000000000000000000000"}}"#
         );
+
+        let resp = Response {
+            result: ResponseResult::Sig(coordinator::SigResult { ack: true }),
+        };
+        assert_str_ser!(resp, r#"{"result":{"ack":true}}"#);
+        let resp = Response {
+            result: ResponseResult::Sig(coordinator::SigResult { ack: false }),
+        };
+        assert_str_ser!(resp, r#"{"result":{"ack":false}}"#);
     }
 
     #[test]
@@ -477,6 +505,15 @@ mod tests {
             req,
             r#"{"method":"set_spend_tx","params":{"deposit_outpoints":["6e4977728e7100db80c30751f27cf834b7a1e02d083a4338874e48d1f3694446:0"],"transaction":"020000000001042a9eb96ed62b3a35883fe632def858e8b80c946ea45f18b364138dfe14dcd70e00000000005ed000003a33ec03af230cf5ae463c2b645f003753bfb06da807b02b89428932cacfaa2301000000005ed000001d9b05aa32106ebb6cf12aefa1115c541b61847aa97823a04be4b77740bfcafc00000000005ed00000e10a83edae847b148100f166ddd65428df8232842df9c26c4ed584313004dc7100000000005ed0000002006f0200000000002200202a3ba224413511e5fc8447c9101d477e2f95db7113ae9fca0b1ef84aac122c605cf6c30000000000000500483045022100a36217e123dea9719dbbc704075dc191f08393537e91ff2630eaf0c7ab89677802207604b290f81148edf8f33c0f84f9aad1391a3513e7a687f721267fc48247adde01473044022055da6db73cf4af14bf8294933dc1b738841c2d6ad371215ceafb61701ac14d9402203626f79d9367ae382041136e52bb378df836b16a97b71c15333bfa3523fbdba701483045022100b2a1b4559bca2719b4abaa7c172329f97b198d5eda2d944d24b684cb42291232022038d74603e78e8e35e02adbe08f93ce90d5d407508463f8e425ddd98abe8fda1701ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b26805004730440220194744ced4f4637ba2b351bd2562632e93a0e39cc087702514fc2b7fa2da4c0a0220700803ec7e681b1ea31b6463711912dc70bad7bbf50b9f3e063c942a8c1bfe72014730440220216306533836fccc08f07cd8ede702f7ef283539943dc10b93576892ed807217022019bd34f280f74578331377b15cb0f3184d30b2ddb87edd79a0bc63db17aa726b0147304402203a24c13039e1a5abdd8d22dc44036b415b96a4a6cf449145f5bcc89a48cf32af022052c6a253de2c38e41fff9cf16f4869a78e07535ec5806a2ff3f985cb7993fbe201ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b2680500483045022100bea60c83db41973c639d42cd3525efe82b15456bfba0a904fb77ccb8a8e054cb02206498d4a777c56f943f388eb0f1d765ee8395d1c2e781486d0dd4f0700adc8f0901473044022052ebc8f31d96bd172f2491cd85b0ef9b4aa1f2408e185781cd57a550d7b4f463022069f9e78d039665d5a53c13752d1719e567928c465219a64aa7ee5bc89578b4ad01483045022100b29bf7526aab5fad36f77ecd628352afc12d00c32a0747ad91dd61aae767e4d2022023f0c040ee84caf653d541d8b5f1ac6472e52199056112d99d3a739e57bfaac501ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b2680500483045022100af1f4b2c3455b044970e8bf62c9e75b4b3e87b5bac7af3b3e33a101e3eebed7202204c377b3764a7dfeccb2f82af327eb23dbf408ae48284a1a7206f43dc04a0b39701483045022100f221ee515d63aef0f27545b736367d0d1ae3ce4433b8818686587decc048b1cc0220536fdfb7470dcd28db813d0efcc2acb364a4d1eece7afcdc9510525993f7487401483045022100faca69e1e8c7b969f0ca666a358693b6bac50b9c02c3722dc2d27a0ccc664563022006ce6039bfcae8a28d74b3d584c37723b466983a4c0ccb63591df74185850a5101ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b26800000000"}}"#
         );
+
+        let response = Response {
+            result: ResponseResult::SetSpend(coordinator::SetSpendResult { ack: true }),
+        };
+        assert_str_ser!(response, r#"{"result":{"ack":true}}"#);
+        let response = Response {
+            result: ResponseResult::SetSpend(coordinator::SetSpendResult { ack: false }),
+        };
+        assert_str_ser!(response, r#"{"result":{"ack":false}}"#);
     }
 
     #[test]
