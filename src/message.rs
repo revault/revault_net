@@ -120,6 +120,32 @@ pub struct Response<T> {
     pub id: u32,
 }
 
+mod serde_tx_hex {
+    use revault_tx::bitcoin::{
+        consensus::encode,
+        hashes::hex::{FromHex, ToHex},
+        Transaction,
+    };
+    use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(tx: &Transaction, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let hex_str = encode::serialize(tx).to_hex();
+        hex_str.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Transaction, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let bytes = Vec::from_hex(&s).map_err(serde::de::Error::custom)?;
+        encode::deserialize::<Transaction>(&bytes).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Messages related to the communication with the Watchtower(s)
 pub mod watchtower {
     use super::{Deserialize, Request, Serialize};
@@ -160,7 +186,7 @@ pub mod watchtower {
 
 /// Messages related to the communication with the Coordinator
 pub mod coordinator {
-    use super::{Deserialize, Request, Serialize};
+    use super::{serde_tx_hex, Deserialize, Request, Serialize};
     use bitcoin::{
         hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
@@ -169,32 +195,6 @@ pub mod coordinator {
     use revault_tx::transactions::{RevaultTransaction, SpendTransaction};
     use std::collections::BTreeMap;
     use std::convert::From;
-
-    mod serde_tx_hex {
-        use revault_tx::bitcoin::{
-            consensus::encode,
-            hashes::hex::{FromHex, ToHex},
-            Transaction,
-        };
-        use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
-
-        pub fn serialize<S>(tx: &Transaction, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-        {
-            let hex_str = encode::serialize(tx).to_hex();
-            hex_str.serialize(serializer)
-        }
-
-        pub fn deserialize<'de, D>(deserializer: D) -> Result<Transaction, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            let s = String::deserialize(deserializer)?;
-            let bytes = Vec::from_hex(&s).map_err(serde::de::Error::custom)?;
-            encode::deserialize::<Transaction>(&bytes).map_err(serde::de::Error::custom)
-        }
-    }
 
     /// Sent by a wallet to retrieve all signatures for a specific transaction
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -296,16 +296,17 @@ pub mod coordinator {
 
 /// Messages related to the communication with the Cosigning Server(s)
 pub mod cosigner {
-    use super::{Deserialize, Request, Serialize};
-    use revault_tx::transactions::SpendTransaction;
+    use super::{serde_tx_hex, Deserialize, Request, Serialize};
+    use revault_tx::bitcoin::{self, secp256k1};
     use std::convert::From;
 
     /// Message from a manager to a cosigning server who will soon attempt to
     /// unvault and spend a vault utxo
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
     pub struct SignRequest {
-        /// The partially signed unvault transaction
-        pub tx: SpendTransaction,
+        /// The Spend transaction to sign the inputs for
+        #[serde(with = "serde_tx_hex")]
+        pub tx: bitcoin::Transaction,
     }
     impl_to_request!(SignRequest, "sign", Sign);
 
@@ -314,7 +315,7 @@ pub mod cosigner {
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
     pub struct SignResult {
         /// Cosigning server's signature for the unvault transaction
-        pub tx: Option<SpendTransaction>,
+        pub signatures: Vec<secp256k1::Signature>,
     }
 }
 
@@ -546,20 +547,34 @@ mod tests {
 
     #[test]
     fn serde_cosigner_sign() {
-        let tx = get_dummy_spend_tx();
+        let tx = get_dummy_spend_tx().into_psbt().extract_tx();
         let msg = cosigner::SignRequest { tx };
         let req = Request::from(msg);
         roundtrip!(req);
         assert_str_ser!(
             req,
-            format!("{{\"method\":\"sign\",\"params\":{{\"tx\":\"cHNidP8BAGcCAAAAAY74R7yfKjYatj96vo5Ww2nRXnMLqJZ0sJtCZ0vUDJT1AAAAAADNVgAAAoDYAQAAAAAAIgAgrhve44jyE2BUeXInsUqYPSjeKfUi8+vcTiX9K649nlIBAAAAAAAAAAAAAAAAAAEBK6BK9QUAAAAAIgAgGOT4nZS2eDtYm83Cvrva0Ozxmrw4Wjin73s81+Z/MfEBAwQBAAAAAQX9YgJTIQJXWghCPRbOUhpx+hi93OfpK75maJRYRC38QR4f7+NtFiECM9/45YqHN25XccUBgRIDEcbyVEgt7j61+c9r3RZ7FzohAriewns/EcwKUVDvv1bxr790pkzQRzmqfV3dQ9mzBjaQU65kdqkUqOUtXIDgEzokTmljuXvjUVK6PKqIrGt2qRSxhJ72lPFm92bL1zs0fxxSxgvWIIisbJNrdqkUH5eaO3DdSZU5iyaVBAxs4jQpiiaIrGyTa3apFORRbu2KExrgnCCww5w9TraaoolAiKxsk2t2qRTdO8BPO/zd71a6yb+Cns88TZKG84isbJNrdqkU32Y5t5RL0rYBZZvHWmii6eTcgZ+IrGyTa3apFK83DFJxO+ke61QLvGNyYnmSwKrDiKxsk2t2qRQOTi7K/HfcXcC5iBLjCnMWcMWjIYisbJNYh2dYIQLR/ezgE85uXQeHPU/DkO9OMViCc8qtX1GT1B+pC3O4ASECx3y8Y+ejFiUsobbCiYlAU3h87Q7y+QhADwLFygARZXchAiQAGsW+t/RQ0AJ1axuUM9e58WBlzItzzI4xB8sPnMrsIQKnh96esMFOEyF0tbKBXWmAtff+mxSOoyQVefv/JN/vhSEDiQaTfG58TKdD2N4DbB+wCd3Sz04D4Psle+84rmIW51ghAzFWj+Qs+0gWprDMs3Aat9f5wMZuZaZth1AAtHbe2NbxIQL8522r0lMYLHkL+h2yus2uJP8y6N28+cwpWyaTFNnP+CECdjQgoJBQYwTi7KPMwt1RBcdP0KnnWdYNCSkUmtF972hYrwLOVrJoAAEBaVEhAldaCEI9Fs5SGnH6GL3c5+krvmZolFhELfxBHh/v420WIQIz3/jlioc3bldxxQGBEgMRxvJUSC3uPrX5z2vdFnsXOiECuJ7Cez8RzApRUO+/VvGvv3SmTNBHOap9Xd1D2bMGNpBTrgAA\"}},\"id\":{}}}", req.id()
+            format!("{{\"method\":\"sign\",\"params\":{{\"tx\":\"02000000018ef847bc9f2a361ab63f7abe8e56c369d15e730ba89674b09b42674bd40c94f50000000000cd5600000280d8010000000000220020ae1bdee388f2136054797227b14a983d28de29f522f3ebdc4e25fd2bae3d9e5201000000000000000000000000\"}},\"id\":{}}}", req.id()
         ));
 
         let msg = Response {
-            result: ResponseResult::SignResult(cosigner::SignResult { tx: None }),
+            result: ResponseResult::SignResult(cosigner::SignResult { signatures: vec![] }),
             id: 975687,
         };
         roundtrip!(msg);
-        assert_str_ser!(msg, r#"{"result":{"tx":null},"id":975687}"#);
+        assert_str_ser!(msg, r#"{"result":{"signatures":[]},"id":975687}"#);
+
+        let sig_a = Signature::from_str("304402206c93d5d6a8b10732f6489720ea863d551c1e646b507d3c925cfd0a9c259802aa02204719d878ea162fc649592da01702518882e8fc9fe4656dc8e713cd143431bf2a").unwrap();
+        let sig_b = Signature::from_str("30440220695ce60aac47d336967a0cca03491f688d87af154313a405938bd41ac822832a02201d9cec42c796603229f47ac60b6575cda12a744d942bada68edb175b3e345c58").unwrap();
+        let msg = Response {
+            result: ResponseResult::SignResult(cosigner::SignResult {
+                signatures: vec![sig_a, sig_b],
+            }),
+            id: 975687,
+        };
+        roundtrip!(msg);
+        assert_str_ser!(
+            msg,
+            r#"{"result":{"signatures":["304402206c93d5d6a8b10732f6489720ea863d551c1e646b507d3c925cfd0a9c259802aa02204719d878ea162fc649592da01702518882e8fc9fe4656dc8e713cd143431bf2a","30440220695ce60aac47d336967a0cca03491f688d87af154313a405938bd41ac822832a02201d9cec42c796603229f47ac60b6575cda12a744d942bada68edb175b3e345c58"]},"id":975687}"#
+        );
     }
 }
