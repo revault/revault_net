@@ -2,14 +2,16 @@
 
 use std::{error, fmt};
 
+use crate::noise::{MAC_SIZE, NOISE_MESSAGE_MAX_SIZE, NOISE_PLAINTEXT_MAX_SIZE};
+
 #[derive(Debug)]
 pub enum NoiseError {
     /// Error from Snow's internals
     Snow(snow::error::Error),
-    /// An invalid plaintext was passed for encryption
-    InvalidPlaintext,
-    /// An invalid ciphertext was passed for decryption
-    InvalidCiphertext,
+    /// A too large plaintext message was passed for encryption
+    TooLargePlaintext(usize),
+    /// A too large or too small ciphertext was passed for decryption
+    InvalidCiphertextSize(usize),
     /// Handshake message was invalid
     BadHandshake,
     /// Remote static public key mismatch from passed keys
@@ -26,8 +28,19 @@ impl fmt::Display for NoiseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Self::Snow(ref e) => write!(f, "Snow Error: {}", e),
-            Self::InvalidPlaintext => write!(f, "Invalid plaintext. Message too large?"),
-            Self::InvalidCiphertext => write!(f, "Invalid ciphertext. Message too large?"),
+            Self::TooLargePlaintext(size) => write!(
+                f,
+                "Message too large to encrypt: '{}' bytes but max is '{}'",
+                size, NOISE_PLAINTEXT_MAX_SIZE
+            ),
+            Self::InvalidCiphertextSize(size) => {
+                write!(
+                    f,
+                    "Invalid ciphertext size. Size is '{}' bytes but must \
+                     be comprised in between '{}' and '{}' (included)",
+                    size, MAC_SIZE, NOISE_MESSAGE_MAX_SIZE
+                )
+            }
             Self::BadHandshake => write!(f, "Invalid handshake magic bytes"),
             Self::MissingStaticKey => write!(
                 f,
