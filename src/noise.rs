@@ -180,7 +180,7 @@ impl KKChannel {
     /// On success, returns the ciphertext.
     pub fn encrypt_message(&mut self, message: &[u8]) -> Result<NoiseEncryptedMessage, NoiseError> {
         if message.len() > NOISE_PLAINTEXT_MAX_SIZE {
-            return Err(NoiseError::InvalidPlaintext);
+            return Err(NoiseError::TooLargePlaintext(message.len()));
         }
         let mut output = vec![0u8; encrypted_msg_size(message.len())];
 
@@ -214,11 +214,8 @@ impl KKChannel {
         message: &NoiseEncryptedMessage,
     ) -> Result<Vec<u8>, NoiseError> {
         // TODO: could be in NoiseEncryptedMessage's constructor?
-        if message.0.len() > NOISE_MESSAGE_MAX_SIZE {
-            return Err(NoiseError::InvalidCiphertext);
-        }
-        if message.0.len() < MAC_SIZE {
-            return Err(NoiseError::InvalidCiphertext);
+        if message.0.len() < MAC_SIZE || message.0.len() > NOISE_MESSAGE_MAX_SIZE {
+            return Err(NoiseError::InvalidCiphertextSize(message.0.len()));
         }
         let mut plaintext = vec![0u8; message.0.len()];
 

@@ -122,11 +122,16 @@ impl KKTransport {
         log::trace!("Sending request: '{}'", String::from_utf8_lossy(&raw_req));
         self.write(&raw_req)?;
 
-        let raw_resp = self.read()?;
-        log::trace!("Read response: '{}'", String::from_utf8_lossy(&raw_resp));
-        let resp: message::Response<T> = serde_json::from_slice(&raw_resp)?;
-
-        Ok(resp.result)
+        loop {
+            let raw_resp = self.read()?;
+            log::trace!("Read response: '{}'", String::from_utf8_lossy(&raw_resp));
+            let resp: message::Response<T> = serde_json::from_slice(&raw_resp)?;
+            if resp.id == req.id() {
+                return Ok(resp.result);
+            } else {
+                log::trace!("Reponse was not for us. Continuing to read.");
+            }
+        }
     }
 
     // DRY helper to write a response to the communication channel
@@ -148,8 +153,9 @@ impl KKTransport {
         log::trace!("Read request: '{}'", String::from_utf8_lossy(&raw_req));
         let req: message::Request = serde_json::from_slice(&raw_req)?;
 
+        let id = req.id();
         if let Some(result) = response_cb(req.params()) {
-            self._write_resp(&message::Response { result })?;
+            self._write_resp(&message::Response { result, id })?;
         }
 
         Ok(())
@@ -165,8 +171,9 @@ impl KKTransport {
         log::trace!("Read request: '{}'", String::from_utf8_lossy(&raw_req));
         let req: message::Request = serde_json::from_slice(&raw_req)?;
 
+        let id = req.id();
         if let Some(result) = response_cb(req.params()).await {
-            self._write_resp(&message::Response { result })?;
+            self._write_resp(&message::Response { result, id })?;
         }
 
         Ok(())
