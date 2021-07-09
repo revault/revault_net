@@ -10,7 +10,7 @@ as well as the [transport over which these messages are exchanged](https://githu
 
 Contributions are very welcome. For general guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Discussions happen either here in issues or at [`#revault` on freenode](https://webchat.freenode.net/).
+Discussions happen either here in issues or at [`#revault` on Libera](https://web.libera.chat/?channels=#revault).
 
 
 # Licence
