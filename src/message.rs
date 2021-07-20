@@ -126,6 +126,7 @@ pub mod watchtower {
     use bitcoin::{
         hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
+        util::bip32,
         OutPoint,
     };
     use std::collections::BTreeMap;
@@ -142,6 +143,8 @@ pub mod watchtower {
         pub txid: Txid,
         /// Deposit outpoint of this vault
         pub deposit_outpoint: OutPoint,
+        /// Derivation index of the deposit descriptor
+        pub derivation_index: bip32::ChildNumber,
     }
     impl_to_request!(Sig, "sig", WtSig);
 
@@ -390,16 +393,18 @@ mod tests {
             "3694ef9e8fcd78e9b8165a41e6f5e2b5f10bcd92c6d6e42b3325a850df56cd83:0",
         )
         .unwrap();
+        let derivation_index = 42398.into();
         let msg = watchtower::Sig {
             signatures,
             txid,
             deposit_outpoint,
+            derivation_index,
         };
         let req = Request::from(msg);
         roundtrip!(req);
         assert_str_ser!(
             req,
-            format!("{{\"method\":\"sig\",\"params\":{{\"signatures\":{{\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\"}},\"txid\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"deposit_outpoint\":\"3694ef9e8fcd78e9b8165a41e6f5e2b5f10bcd92c6d6e42b3325a850df56cd83:0\"}},\"id\":{}}}", req.id())
+            format!("{{\"method\":\"sig\",\"params\":{{\"signatures\":{{\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\"}},\"txid\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"deposit_outpoint\":\"3694ef9e8fcd78e9b8165a41e6f5e2b5f10bcd92c6d6e42b3325a850df56cd83:0\",\"derivation_index\":42398}},\"id\":{}}}", req.id())
             );
     }
 
