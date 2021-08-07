@@ -1,6 +1,6 @@
 [package]
 name = "revault_net"
-version = "0.0.1"
+version = "0.1.0"
 authors = ["JSwambo <jake.t.swambo@hotmail.co.uk>", "Antoine Poinsot <darosior@protonmail.com>"]
 edition = "2018"
 repository = "https://github.com/revault/revault_tx"
@@ -17,8 +17,8 @@ fuzz = []
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-revault_tx = { version = "0.2", features = ["use-serde"] }
-bitcoin = { version = "0.26", features = ["use-serde"] }
+revault_tx = { version = "0.3", features = ["use-serde"] }
+bitcoin = { version = "0.27", features = ["use-serde"] }
 snow = { version = "0.7", default-features = false, features = ["libsodium-resolver"] }
 
 # Used for Noise crypto and generating pubkeys

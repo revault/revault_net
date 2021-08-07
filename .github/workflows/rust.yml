@@ -8,6 +8,7 @@ jobs:
       matrix:
         toolchain:
           - nightly
+          - 1.43
         os:
           - ubuntu-latest
           - macOS-latest
@@ -27,7 +28,7 @@ jobs:
       - name: Test on Rust ${{ matrix.toolchain }}
         run: cargo test --all-features --verbose --color always
       - name: Fuzz
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'nightly'
         run: ./fuzz/run.sh
 
   rustfmt_check:

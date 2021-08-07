@@ -360,7 +360,7 @@ mod tests {
     }
 
     fn get_dummy_spend_tx() -> SpendTransaction {
-        let psbt_base64 = "cHNidP8BAGcCAAAAAY74R7yfKjYatj96vo5Ww2nRXnMLqJZ0sJtCZ0vUDJT1AAAAAADNVgAAAoDYAQAAAAAAIgAgrhve44jyE2BUeXInsUqYPSjeKfUi8+vcTiX9K649nlIBAAAAAAAAAAAAAAAAAAEBK6BK9QUAAAAAIgAgGOT4nZS2eDtYm83Cvrva0Ozxmrw4Wjin73s81+Z/MfEBAwQBAAAAAQX9YgJTIQJXWghCPRbOUhpx+hi93OfpK75maJRYRC38QR4f7+NtFiECM9/45YqHN25XccUBgRIDEcbyVEgt7j61+c9r3RZ7FzohAriewns/EcwKUVDvv1bxr790pkzQRzmqfV3dQ9mzBjaQU65kdqkUqOUtXIDgEzokTmljuXvjUVK6PKqIrGt2qRSxhJ72lPFm92bL1zs0fxxSxgvWIIisbJNrdqkUH5eaO3DdSZU5iyaVBAxs4jQpiiaIrGyTa3apFORRbu2KExrgnCCww5w9TraaoolAiKxsk2t2qRTdO8BPO/zd71a6yb+Cns88TZKG84isbJNrdqkU32Y5t5RL0rYBZZvHWmii6eTcgZ+IrGyTa3apFK83DFJxO+ke61QLvGNyYnmSwKrDiKxsk2t2qRQOTi7K/HfcXcC5iBLjCnMWcMWjIYisbJNYh2dYIQLR/ezgE85uXQeHPU/DkO9OMViCc8qtX1GT1B+pC3O4ASECx3y8Y+ejFiUsobbCiYlAU3h87Q7y+QhADwLFygARZXchAiQAGsW+t/RQ0AJ1axuUM9e58WBlzItzzI4xB8sPnMrsIQKnh96esMFOEyF0tbKBXWmAtff+mxSOoyQVefv/JN/vhSEDiQaTfG58TKdD2N4DbB+wCd3Sz04D4Psle+84rmIW51ghAzFWj+Qs+0gWprDMs3Aat9f5wMZuZaZth1AAtHbe2NbxIQL8522r0lMYLHkL+h2yus2uJP8y6N28+cwpWyaTFNnP+CECdjQgoJBQYwTi7KPMwt1RBcdP0KnnWdYNCSkUmtF972hYrwLOVrJoAAEBaVEhAldaCEI9Fs5SGnH6GL3c5+krvmZolFhELfxBHh/v420WIQIz3/jlioc3bldxxQGBEgMRxvJUSC3uPrX5z2vdFnsXOiECuJ7Cez8RzApRUO+/VvGvv3SmTNBHOap9Xd1D2bMGNpBTrgAA";
+        let psbt_base64 = "cHNidP8BAH0CAAAAAd2fZiAXvmep8XCh3vf9c8V5gotkOZWptp6avsnSEhgoAAAAAABiUQAAAgA4AAAAAAAAIgAgPqpwvldgog4yJtnHMgCp3T4SuJlhvbQubPg+Ay+lsxugjAIAAAAAABYAFLXmMHws0v/p0i/8wBw/m/cdn6pSAAAAAAABAStADQMAAAAAACIAIKyQV7nF2Bi/qy1SPN0G7IhT5+15vYgQGue8nhjlxiI+AQMEAQAAAAEFqiECdM7fXyb9RsKrLwWwIGhzwEcmQu3Xgwszr5cfGw3tZ0esUYdkdqkUPoo9M4KKphfbfY+qrRhTuINkZh2IrGt2qRSZd8fHIFnMWox8OsgV1FjQGd4gsoisbJNSh2dSIQPXjgCVOtO18uVqAVj/Wo3QsDAigREpmlMglV7rJrWPOCEDTW2PzaaP+HXV8jckNHZFbn/GPYBbdNVwotjSfRePg8lSrwJiUbJoAAAA";
         serde_json::from_str(&serde_json::to_string(&psbt_base64).unwrap()).unwrap()
     }
 
@@ -445,11 +445,10 @@ mod tests {
             }),
             id: 0,
         };
-        eprintln!("{}", get_dummy_spend_tx().hex());
         roundtrip!(msg);
         assert_str_ser!(
             msg,
-            r#"{"result":{"transaction":"02000000018ef847bc9f2a361ab63f7abe8e56c369d15e730ba89674b09b42674bd40c94f50000000000cd5600000280d8010000000000220020ae1bdee388f2136054797227b14a983d28de29f522f3ebdc4e25fd2bae3d9e5201000000000000000000000000"},"id":0}"#
+            r#"{"result":{"transaction":"0200000001dd9f662017be67a9f170a1def7fd73c579828b643995a9b69e9abec9d21218280000000000625100000200380000000000002200203eaa70be5760a20e3226d9c73200a9dd3e12b89961bdb42e6cf83e032fa5b31ba08c020000000000160014b5e6307c2cd2ffe9d22ffcc01c3f9bf71d9faa5200000000"},"id":0}"#
         );
     }
 
@@ -557,7 +556,7 @@ mod tests {
         roundtrip!(req);
         assert_str_ser!(
             req,
-            format!("{{\"method\":\"sign\",\"params\":{{\"tx\":\"cHNidP8BAGcCAAAAAY74R7yfKjYatj96vo5Ww2nRXnMLqJZ0sJtCZ0vUDJT1AAAAAADNVgAAAoDYAQAAAAAAIgAgrhve44jyE2BUeXInsUqYPSjeKfUi8+vcTiX9K649nlIBAAAAAAAAAAAAAAAAAAEBK6BK9QUAAAAAIgAgGOT4nZS2eDtYm83Cvrva0Ozxmrw4Wjin73s81+Z/MfEBAwQBAAAAAQX9YgJTIQJXWghCPRbOUhpx+hi93OfpK75maJRYRC38QR4f7+NtFiECM9/45YqHN25XccUBgRIDEcbyVEgt7j61+c9r3RZ7FzohAriewns/EcwKUVDvv1bxr790pkzQRzmqfV3dQ9mzBjaQU65kdqkUqOUtXIDgEzokTmljuXvjUVK6PKqIrGt2qRSxhJ72lPFm92bL1zs0fxxSxgvWIIisbJNrdqkUH5eaO3DdSZU5iyaVBAxs4jQpiiaIrGyTa3apFORRbu2KExrgnCCww5w9TraaoolAiKxsk2t2qRTdO8BPO/zd71a6yb+Cns88TZKG84isbJNrdqkU32Y5t5RL0rYBZZvHWmii6eTcgZ+IrGyTa3apFK83DFJxO+ke61QLvGNyYnmSwKrDiKxsk2t2qRQOTi7K/HfcXcC5iBLjCnMWcMWjIYisbJNYh2dYIQLR/ezgE85uXQeHPU/DkO9OMViCc8qtX1GT1B+pC3O4ASECx3y8Y+ejFiUsobbCiYlAU3h87Q7y+QhADwLFygARZXchAiQAGsW+t/RQ0AJ1axuUM9e58WBlzItzzI4xB8sPnMrsIQKnh96esMFOEyF0tbKBXWmAtff+mxSOoyQVefv/JN/vhSEDiQaTfG58TKdD2N4DbB+wCd3Sz04D4Psle+84rmIW51ghAzFWj+Qs+0gWprDMs3Aat9f5wMZuZaZth1AAtHbe2NbxIQL8522r0lMYLHkL+h2yus2uJP8y6N28+cwpWyaTFNnP+CECdjQgoJBQYwTi7KPMwt1RBcdP0KnnWdYNCSkUmtF972hYrwLOVrJoAAEBaVEhAldaCEI9Fs5SGnH6GL3c5+krvmZolFhELfxBHh/v420WIQIz3/jlioc3bldxxQGBEgMRxvJUSC3uPrX5z2vdFnsXOiECuJ7Cez8RzApRUO+/VvGvv3SmTNBHOap9Xd1D2bMGNpBTrgAA\"}},\"id\":{}}}", req.id()
+            format!("{{\"method\":\"sign\",\"params\":{{\"tx\":\"cHNidP8BAH0CAAAAAd2fZiAXvmep8XCh3vf9c8V5gotkOZWptp6avsnSEhgoAAAAAABiUQAAAgA4AAAAAAAAIgAgPqpwvldgog4yJtnHMgCp3T4SuJlhvbQubPg+Ay+lsxugjAIAAAAAABYAFLXmMHws0v/p0i/8wBw/m/cdn6pSAAAAAAABAStADQMAAAAAACIAIKyQV7nF2Bi/qy1SPN0G7IhT5+15vYgQGue8nhjlxiI+AQMEAQAAAAEFqiECdM7fXyb9RsKrLwWwIGhzwEcmQu3Xgwszr5cfGw3tZ0esUYdkdqkUPoo9M4KKphfbfY+qrRhTuINkZh2IrGt2qRSZd8fHIFnMWox8OsgV1FjQGd4gsoisbJNSh2dSIQPXjgCVOtO18uVqAVj/Wo3QsDAigREpmlMglV7rJrWPOCEDTW2PzaaP+HXV8jckNHZFbn/GPYBbdNVwotjSfRePg8lSrwJiUbJoAAAA\"}},\"id\":{}}}", req.id()
         ));
 
         let msg = Response {
