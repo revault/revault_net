@@ -173,6 +173,31 @@ pub mod coordinator {
     use std::collections::BTreeMap;
     use std::convert::From;
 
+    mod serde_tx_hex_nullable {
+        use revault_tx::bitcoin::{consensus::encode, hashes::hex::FromHex, Transaction};
+        use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
+
+        pub fn serialize<S>(tx: &Option<Transaction>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            tx.as_ref().map(encode::serialize_hex).serialize(serializer)
+        }
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Transaction>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            <Option<String>>::deserialize(deserializer)?
+                .map(|s| Vec::from_hex(&s).map_err(serde::de::Error::custom))
+                .transpose()?
+                .map(|bytes| {
+                    encode::deserialize::<Transaction>(&bytes).map_err(serde::de::Error::custom)
+                })
+                .transpose()
+        }
+    }
+
     mod serde_tx_hex {
         use revault_tx::bitcoin::{
             consensus::encode,
@@ -271,8 +296,8 @@ pub mod coordinator {
     pub struct SpendTx {
         /// The Bitcoin-serialized Spend transaction. The sync server isn't
         /// creating it so there is no point to create it from_spend_tx().
-        #[serde(with = "serde_tx_hex")]
-        pub transaction: Transaction,
+        #[serde(with = "serde_tx_hex_nullable")]
+        pub transaction: Option<Transaction>,
     }
 
     /// Message from a stakeholder client to sync server to share (at any time)
@@ -441,7 +466,7 @@ mod tests {
         // Response
         let msg = Response {
             result: ResponseResult::SpendTx(coordinator::SpendTx {
-                transaction: get_dummy_spend_tx().into_psbt().extract_tx(),
+                transaction: Some(get_dummy_spend_tx().into_psbt().extract_tx()),
             }),
             id: 0,
         };
@@ -450,6 +475,14 @@ mod tests {
             msg,
             r#"{"result":{"transaction":"0200000001dd9f662017be67a9f170a1def7fd73c579828b643995a9b69e9abec9d21218280000000000625100000200380000000000002200203eaa70be5760a20e3226d9c73200a9dd3e12b89961bdb42e6cf83e032fa5b31ba08c020000000000160014b5e6307c2cd2ffe9d22ffcc01c3f9bf71d9faa5200000000"},"id":0}"#
         );
+
+        // Response
+        let msg = Response {
+            result: ResponseResult::SpendTx(coordinator::SpendTx { transaction: None }),
+            id: 0,
+        };
+        roundtrip!(msg);
+        assert_str_ser!(msg, r#"{"result":{"transaction":null},"id":0}"#);
     }
 
     #[test]
