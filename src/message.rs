@@ -385,7 +385,7 @@ mod tests {
     }
 
     fn get_dummy_spend_tx() -> SpendTransaction {
-        let psbt_base64 = "cHNidP8BAH0CAAAAAd2fZiAXvmep8XCh3vf9c8V5gotkOZWptp6avsnSEhgoAAAAAABiUQAAAgA4AAAAAAAAIgAgPqpwvldgog4yJtnHMgCp3T4SuJlhvbQubPg+Ay+lsxugjAIAAAAAABYAFLXmMHws0v/p0i/8wBw/m/cdn6pSAAAAAAABAStADQMAAAAAACIAIKyQV7nF2Bi/qy1SPN0G7IhT5+15vYgQGue8nhjlxiI+AQMEAQAAAAEFqiECdM7fXyb9RsKrLwWwIGhzwEcmQu3Xgwszr5cfGw3tZ0esUYdkdqkUPoo9M4KKphfbfY+qrRhTuINkZh2IrGt2qRSZd8fHIFnMWox8OsgV1FjQGd4gsoisbJNSh2dSIQPXjgCVOtO18uVqAVj/Wo3QsDAigREpmlMglV7rJrWPOCEDTW2PzaaP+HXV8jckNHZFbn/GPYBbdNVwotjSfRePg8lSrwJiUbJoAAAA";
+        let psbt_base64 = "cHNidP8BAGcCAAAAATxaePMJ/mqwh5U4EuAxc6BA+zDjPQ7jOZkG6SwsVjS+AAAAAADxhAAAApAyAAAAAAAAIgAg/Iu47XKy0DdV4s0xPi4TIf3vYoPZyKIZOPcV+0N5weyQjAIAAAAAAAAAAAAAAAEBK0ANAwAAAAAAIgAgiG0uP7biSwBL+/R9F+L4j7Wn9KUx0CrK+SO/6cytV+kBAwQBAAAAAQWrIQNRMVU9kvx3cYU3Yc7ugUvkEEJpCnXUch9DM8PvaHPMlKxRh2R2qRT0o4PfXU6hLybdxLtKAg6nRuWKLIisa3apFLNZ0Mfc3ibY3iQSST4v5dIYT5z/iKxsk1KHZ1IhA5anIZbmDC0OjRv48b72OqvfYaBjbCfoxy4Gysh+UQWiIQIv37joo1CdvlqRB10+bMVHEWLakwFgZU7/I8yhlUEjhVKvA/GEALJoIgYCLOA2eXypsfIGbWrL27qfqXwW60ekqujidVVz19nknkgIceXqYQoAAAAiBgIv37joo1CdvlqRB10+bMVHEWLakwFgZU7/I8yhlUEjhQgJP+tmCgAAACIGAvcliNqAlmYXhz0hg9iqgzfCwPP94wzY4keg515U1N3cCPgnxkkKAAAAIgYDUTFVPZL8d3GFN2HO7oFL5BBCaQp11HIfQzPD72hzzJQIV83MgAoAAAAiBgOWpyGW5gwtDo0b+PG+9jqr32GgY2wn6McuBsrIflEFoghVsJUlCgAAAAAAAA==";
         serde_json::from_str(&serde_json::to_string(&psbt_base64).unwrap()).unwrap()
     }
 
@@ -470,10 +470,16 @@ mod tests {
             }),
             id: 0,
         };
+        eprintln!(
+            "{}",
+            bitcoin::consensus::encode::serialize_hex(
+                &get_dummy_spend_tx().into_psbt().extract_tx()
+            )
+        );
         roundtrip!(msg);
         assert_str_ser!(
             msg,
-            r#"{"result":{"transaction":"0200000001dd9f662017be67a9f170a1def7fd73c579828b643995a9b69e9abec9d21218280000000000625100000200380000000000002200203eaa70be5760a20e3226d9c73200a9dd3e12b89961bdb42e6cf83e032fa5b31ba08c020000000000160014b5e6307c2cd2ffe9d22ffcc01c3f9bf71d9faa5200000000"},"id":0}"#
+            r#"{"result":{"transaction":"02000000013c5a78f309fe6ab087953812e03173a040fb30e33d0ee3399906e92c2c5634be0000000000f1840000029032000000000000220020fc8bb8ed72b2d03755e2cd313e2e1321fdef6283d9c8a21938f715fb4379c1ec908c0200000000000000000000"},"id":0}"#
         );
 
         // Response
@@ -584,12 +590,13 @@ mod tests {
     #[test]
     fn serde_cosigner_sign() {
         let tx = get_dummy_spend_tx();
+        eprintln!("{}", tx);
         let msg = cosigner::SignRequest { tx };
         let req = Request::from(msg);
         roundtrip!(req);
         assert_str_ser!(
             req,
-            format!("{{\"method\":\"sign\",\"params\":{{\"tx\":\"cHNidP8BAH0CAAAAAd2fZiAXvmep8XCh3vf9c8V5gotkOZWptp6avsnSEhgoAAAAAABiUQAAAgA4AAAAAAAAIgAgPqpwvldgog4yJtnHMgCp3T4SuJlhvbQubPg+Ay+lsxugjAIAAAAAABYAFLXmMHws0v/p0i/8wBw/m/cdn6pSAAAAAAABAStADQMAAAAAACIAIKyQV7nF2Bi/qy1SPN0G7IhT5+15vYgQGue8nhjlxiI+AQMEAQAAAAEFqiECdM7fXyb9RsKrLwWwIGhzwEcmQu3Xgwszr5cfGw3tZ0esUYdkdqkUPoo9M4KKphfbfY+qrRhTuINkZh2IrGt2qRSZd8fHIFnMWox8OsgV1FjQGd4gsoisbJNSh2dSIQPXjgCVOtO18uVqAVj/Wo3QsDAigREpmlMglV7rJrWPOCEDTW2PzaaP+HXV8jckNHZFbn/GPYBbdNVwotjSfRePg8lSrwJiUbJoAAAA\"}},\"id\":{}}}", req.id()
+            format!("{{\"method\":\"sign\",\"params\":{{\"tx\":\"cHNidP8BAGcCAAAAATxaePMJ/mqwh5U4EuAxc6BA+zDjPQ7jOZkG6SwsVjS+AAAAAADxhAAAApAyAAAAAAAAIgAg/Iu47XKy0DdV4s0xPi4TIf3vYoPZyKIZOPcV+0N5weyQjAIAAAAAAAAAAAAAAAEBK0ANAwAAAAAAIgAgiG0uP7biSwBL+/R9F+L4j7Wn9KUx0CrK+SO/6cytV+kBAwQBAAAAAQWrIQNRMVU9kvx3cYU3Yc7ugUvkEEJpCnXUch9DM8PvaHPMlKxRh2R2qRT0o4PfXU6hLybdxLtKAg6nRuWKLIisa3apFLNZ0Mfc3ibY3iQSST4v5dIYT5z/iKxsk1KHZ1IhA5anIZbmDC0OjRv48b72OqvfYaBjbCfoxy4Gysh+UQWiIQIv37joo1CdvlqRB10+bMVHEWLakwFgZU7/I8yhlUEjhVKvA/GEALJoIgYCLOA2eXypsfIGbWrL27qfqXwW60ekqujidVVz19nknkgIceXqYQoAAAAiBgIv37joo1CdvlqRB10+bMVHEWLakwFgZU7/I8yhlUEjhQgJP+tmCgAAACIGAvcliNqAlmYXhz0hg9iqgzfCwPP94wzY4keg515U1N3cCPgnxkkKAAAAIgYDUTFVPZL8d3GFN2HO7oFL5BBCaQp11HIfQzPD72hzzJQIV83MgAoAAAAiBgOWpyGW5gwtDo0b+PG+9jqr32GgY2wn6McuBsrIflEFoghVsJUlCgAAAAAAAA==\"}},\"id\":{}}}", req.id()
         ));
 
         let msg = Response {
