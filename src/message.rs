@@ -173,15 +173,18 @@ pub mod coordinator {
     use std::collections::BTreeMap;
     use std::convert::From;
 
-    mod serde_tx_hex_nullable {
-        use revault_tx::bitcoin::{consensus::encode, hashes::hex::FromHex, Transaction};
+    mod serde_tx_base64_nullable {
+        use revault_tx::bitcoin::{consensus::encode, Transaction};
         use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
+        use sodiumoxide::base64::{self, Variant};
 
         pub fn serialize<S>(tx: &Option<Transaction>, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            tx.as_ref().map(encode::serialize_hex).serialize(serializer)
+            tx.as_ref()
+                .map(|t| base64::encode(encode::serialize(t), Variant::Original))
+                .serialize(serializer)
         }
 
         pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Transaction>, D::Error>
@@ -189,7 +192,10 @@ pub mod coordinator {
             D: Deserializer<'de>,
         {
             <Option<String>>::deserialize(deserializer)?
-                .map(|s| Vec::from_hex(&s).map_err(serde::de::Error::custom))
+                .map(|s| {
+                    base64::decode(&s, Variant::Original)
+                        .map_err(|_| serde::de::Error::custom("Invalid base64 string"))
+                })
                 .transpose()?
                 .map(|bytes| {
                     encode::deserialize::<Transaction>(&bytes).map_err(serde::de::Error::custom)
@@ -198,20 +204,17 @@ pub mod coordinator {
         }
     }
 
-    mod serde_tx_hex {
-        use revault_tx::bitcoin::{
-            consensus::encode,
-            hashes::hex::{FromHex, ToHex},
-            Transaction,
-        };
+    mod serde_tx_base64 {
+        use revault_tx::bitcoin::{consensus::encode, Transaction};
         use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
+        use sodiumoxide::base64::{self, Variant};
 
         pub fn serialize<S>(tx: &Transaction, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            let hex_str = encode::serialize(tx).to_hex();
-            hex_str.serialize(serializer)
+            let base64_str = base64::encode(encode::serialize(tx), Variant::Original);
+            base64_str.serialize(serializer)
         }
 
         pub fn deserialize<'de, D>(deserializer: D) -> Result<Transaction, D::Error>
@@ -219,7 +222,8 @@ pub mod coordinator {
             D: Deserializer<'de>,
         {
             let s = String::deserialize(deserializer)?;
-            let bytes = Vec::from_hex(&s).map_err(serde::de::Error::custom)?;
+            let bytes = &base64::decode(&s, Variant::Original)
+                .map_err(|_| serde::de::Error::custom("Invalid base64 string"))?;
             encode::deserialize::<Transaction>(&bytes).map_err(serde::de::Error::custom)
         }
     }
@@ -249,7 +253,7 @@ pub mod coordinator {
         /// Deposit outpoints of the vault this transaction is spending
         pub deposit_outpoints: Vec<OutPoint>,
         /// Fully signed spend transaction, as hex
-        #[serde(with = "serde_tx_hex")]
+        #[serde(with = "serde_tx_base64")]
         transaction: Transaction,
     }
     impl_to_request!(SetSpendTx, "set_spend_tx", SetSpendTx);
@@ -296,7 +300,7 @@ pub mod coordinator {
     pub struct SpendTx {
         /// The Bitcoin-serialized Spend transaction. The sync server isn't
         /// creating it so there is no point to create it from_spend_tx().
-        #[serde(with = "serde_tx_hex_nullable")]
+        #[serde(with = "serde_tx_base64_nullable")]
         pub transaction: Option<Transaction>,
     }
 
@@ -479,7 +483,7 @@ mod tests {
         roundtrip!(msg);
         assert_str_ser!(
             msg,
-            r#"{"result":{"transaction":"02000000013c5a78f309fe6ab087953812e03173a040fb30e33d0ee3399906e92c2c5634be0000000000f1840000029032000000000000220020fc8bb8ed72b2d03755e2cd313e2e1321fdef6283d9c8a21938f715fb4379c1ec908c0200000000000000000000"},"id":0}"#
+            r#"{"result":{"transaction":"AgAAAAE8WnjzCf5qsIeVOBLgMXOgQPsw4z0O4zmZBuksLFY0vgAAAAAA8YQAAAKQMgAAAAAAACIAIPyLuO1ystA3VeLNMT4uEyH972KD2ciiGTj3FftDecHskIwCAAAAAAAAAAAAAA=="},"id":0}"#
         );
 
         // Response
@@ -572,7 +576,7 @@ mod tests {
         roundtrip!(req);
         assert_str_ser!(
             req,
-            format!("{{\"method\":\"set_spend_tx\",\"params\":{{\"deposit_outpoints\":[\"6e4977728e7100db80c30751f27cf834b7a1e02d083a4338874e48d1f3694446:0\"],\"transaction\":\"020000000001042a9eb96ed62b3a35883fe632def858e8b80c946ea45f18b364138dfe14dcd70e00000000005ed000003a33ec03af230cf5ae463c2b645f003753bfb06da807b02b89428932cacfaa2301000000005ed000001d9b05aa32106ebb6cf12aefa1115c541b61847aa97823a04be4b77740bfcafc00000000005ed00000e10a83edae847b148100f166ddd65428df8232842df9c26c4ed584313004dc7100000000005ed0000002006f0200000000002200202a3ba224413511e5fc8447c9101d477e2f95db7113ae9fca0b1ef84aac122c605cf6c30000000000000500483045022100a36217e123dea9719dbbc704075dc191f08393537e91ff2630eaf0c7ab89677802207604b290f81148edf8f33c0f84f9aad1391a3513e7a687f721267fc48247adde01473044022055da6db73cf4af14bf8294933dc1b738841c2d6ad371215ceafb61701ac14d9402203626f79d9367ae382041136e52bb378df836b16a97b71c15333bfa3523fbdba701483045022100b2a1b4559bca2719b4abaa7c172329f97b198d5eda2d944d24b684cb42291232022038d74603e78e8e35e02adbe08f93ce90d5d407508463f8e425ddd98abe8fda1701ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b26805004730440220194744ced4f4637ba2b351bd2562632e93a0e39cc087702514fc2b7fa2da4c0a0220700803ec7e681b1ea31b6463711912dc70bad7bbf50b9f3e063c942a8c1bfe72014730440220216306533836fccc08f07cd8ede702f7ef283539943dc10b93576892ed807217022019bd34f280f74578331377b15cb0f3184d30b2ddb87edd79a0bc63db17aa726b0147304402203a24c13039e1a5abdd8d22dc44036b415b96a4a6cf449145f5bcc89a48cf32af022052c6a253de2c38e41fff9cf16f4869a78e07535ec5806a2ff3f985cb7993fbe201ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b2680500483045022100bea60c83db41973c639d42cd3525efe82b15456bfba0a904fb77ccb8a8e054cb02206498d4a777c56f943f388eb0f1d765ee8395d1c2e781486d0dd4f0700adc8f0901473044022052ebc8f31d96bd172f2491cd85b0ef9b4aa1f2408e185781cd57a550d7b4f463022069f9e78d039665d5a53c13752d1719e567928c465219a64aa7ee5bc89578b4ad01483045022100b29bf7526aab5fad36f77ecd628352afc12d00c32a0747ad91dd61aae767e4d2022023f0c040ee84caf653d541d8b5f1ac6472e52199056112d99d3a739e57bfaac501ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b2680500483045022100af1f4b2c3455b044970e8bf62c9e75b4b3e87b5bac7af3b3e33a101e3eebed7202204c377b3764a7dfeccb2f82af327eb23dbf408ae48284a1a7206f43dc04a0b39701483045022100f221ee515d63aef0f27545b736367d0d1ae3ce4433b8818686587decc048b1cc0220536fdfb7470dcd28db813d0efcc2acb364a4d1eece7afcdc9510525993f7487401483045022100faca69e1e8c7b969f0ca666a358693b6bac50b9c02c3722dc2d27a0ccc664563022006ce6039bfcae8a28d74b3d584c37723b466983a4c0ccb63591df74185850a5101ab2103dacf1ec4d8caaabac45e9237e09d69aadce1b8945dcc4776fe73fb9f4c31f7a4ac51876476a914594f6cd0c51687611968c77d63f40f0422ee26ae88ac6b76a9147ec81e31ce46a8c539882613ee54444fab4fe8a288ac6c93528767522102bf9959bfd4e22513e55bb5905ef3a2a29f9f924adb00c627fd1d92b67ff9cf942102fe9abf103eaa2e1180328774261155380eff416a179e61b0a4be99abcaf88d9b52af035ed000b26800000000\"}},\"id\":{}}}", req.id()
+            format!("{{\"method\":\"set_spend_tx\",\"params\":{{\"deposit_outpoints\":[\"6e4977728e7100db80c30751f27cf834b7a1e02d083a4338874e48d1f3694446:0\"],\"transaction\":\"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\"}},\"id\":{}}}", req.id()
         ));
 
         let response = Response {
