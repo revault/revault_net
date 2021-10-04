@@ -3,17 +3,68 @@ name: CI
 on: [pull_request]
 
 jobs:
-  tests:
+  linux-tests:
     strategy:
       matrix:
         toolchain:
           - nightly
           - 1.43
-        os:
-          - ubuntu-latest
-          - macOS-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v2
+      - name: Install Rust ${{ matrix.toolchain }} toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          override: true
+          profile: minimal
+      # We need to download Tor for the tests. Not needed if
+      # you don't run the tor-specific tests, which need to
+      # start a tor HS from command line.
+      - name: Download Tor
+        run: sudo apt-get install -y tor
+      - name: Build on Rust ${{ matrix.toolchain }}
+        run: cargo build --all-features --verbose --color always
+      - name: Test on Rust ${{ matrix.toolchain }}
+        run: cargo test --all-features --verbose --color always
+      - name: Fuzz
+        if: matrix.toolchain == 'nightly'
+        run: ./fuzz/run.sh
+
+  macos-tests:
+    strategy:
+      matrix:
+        toolchain:
+          - nightly
+          - 1.43
+    runs-on: macOS-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v2
+      - name: Install Rust ${{ matrix.toolchain }} toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          override: true
+          profile: minimal
+      # We need to download Tor for the tests. Not needed if
+      # you don't run the tor-specific tests, which need to
+      # start a tor HS from command line.
+      - name: Download deps
+        run: brew install tor autoconf automake
+      - name: Build on Rust ${{ matrix.toolchain }}
+        run: cargo build --all-features -vv --color always
+      - name: Test on Rust ${{ matrix.toolchain }}
+        run: cargo test --all-features -vv --color always
+
+  windows-tests:
+    strategy:
+      matrix:
+        toolchain:
+          - nightly
+          - 1.43
+    runs-on: windows-latest
     steps:
       - name: Checkout source code
         uses: actions/checkout@v2
@@ -24,12 +75,42 @@ jobs:
           override: true
           profile: minimal
       - name: Build on Rust ${{ matrix.toolchain }}
+        # We can't compile tor on windows, cross-compile only :)
         run: cargo build --verbose --color always
       - name: Test on Rust ${{ matrix.toolchain }}
-        run: cargo test --all-features --verbose --color always
-      - name: Fuzz
-        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'nightly'
-        run: ./fuzz/run.sh
+        run: cargo test --verbose --color always
+
+  # We only cross compile revualt_net with the tor feature for windows,
+  # but we don't run any test. In the future we could download the artifact
+  # from CI and try to run it *somehow*, at the moment I think the tests
+  # are Unix dependent anyways.
+  windows-cross-compile-tor:
+    strategy:
+      matrix:
+        toolchain:
+          - nightly
+          - 1.43
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v2
+      - name: Install needed deps
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64 tar
+      - name: Install Rust ${{ matrix.toolchain }} toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          target: x86_64-pc-windows-gnu
+          override: true
+          profile: minimal
+      # libsodium build.rs is broken: https://github.com/sodiumoxide/sodiumoxide/issues/377
+      # We need to manually download libsodium and give it to cargo while compiling
+      # Note that we could use the libsodium.a already provided in sodiumoxide, but it's tricky to find
+      # FIXME: we are not verifying sigs!! In CI who cares but don't forget to verify them in real life lol
+      - name: Download libsodium
+        run: wget https://download.libsodium.org/libsodium/releases/libsodium-1.0.18-mingw.tar.gz && tar xvf libsodium-1.0.18-mingw.tar.gz
+      - name: Build on Rust ${{ matrix.toolchain }}
+        run: SODIUM_LIB_DIR=$PWD/libsodium-win64/lib/ cargo build -vv --color always --all-features --target x86_64-pc-windows-gnu
 
   rustfmt_check:
     runs-on: ubuntu-latest
