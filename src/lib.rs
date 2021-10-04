@@ -14,5 +14,8 @@ pub mod transport;
 mod error;
 pub use error::Error;
 
+#[cfg(feature = "tor")]
+pub mod tor;
+
 pub use revault_tx::bitcoin;
 pub use sodiumoxide;

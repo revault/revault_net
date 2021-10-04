@@ -4,6 +4,8 @@
 //! to automagically provide encrypted and authenticated channels.
 //!
 
+#[cfg(feature = "tor")]
+use crate::tor::TorProxy;
 use crate::{
     error::Error,
     message,
@@ -36,7 +38,43 @@ impl KKTransport {
         let timeout = Duration::from_secs(20);
         let mut stream = TcpStream::connect_timeout(&addr, timeout)?;
         stream.set_read_timeout(Some(timeout))?;
+        let channel = KKTransport::perform_client_handshake(
+            &mut stream,
+            my_noise_privkey,
+            their_noise_pubkey,
+        )?;
+        Ok(KKTransport { stream, channel })
+    }
 
+    #[cfg(feature = "tor")]
+    /// Connect to server at given tor address using the provided SOCKS5 proxy,
+    /// and enact Noise handshake with given private key.
+    /// Sets a read timeout of 20 seconds.
+    pub fn tor_connect(
+        addr: &str,
+        proxy: &TorProxy,
+        my_noise_privkey: &SecretKey,
+        their_noise_pubkey: &PublicKey,
+    ) -> Result<KKTransport, Error> {
+        let mut stream =
+            socks::Socks5Stream::connect(&format!("{}:{}", proxy.host, proxy.socks_port), addr)?
+                .into_inner();
+        let timeout = Duration::from_secs(20);
+        stream.set_read_timeout(Some(timeout))?;
+        let channel = KKTransport::perform_client_handshake(
+            &mut stream,
+            my_noise_privkey,
+            their_noise_pubkey,
+        )?;
+        Ok(KKTransport { stream, channel })
+    }
+
+    // Used by connect() and tor_connect() to perform the handshake
+    fn perform_client_handshake(
+        stream: &mut TcpStream,
+        my_noise_privkey: &SecretKey,
+        their_noise_pubkey: &PublicKey,
+    ) -> Result<KKChannel, Error> {
         let (cli_act_1, msg_1) =
             KKHandshakeActOne::initiator(my_noise_privkey, their_noise_pubkey)?;
 
@@ -49,8 +87,7 @@ impl KKTransport {
 
         let msg_act_2 = KKMessageActTwo(msg_2);
         let cli_act_2 = KKHandshakeActTwo::initiator(cli_act_1, &msg_act_2)?;
-        let channel = KKChannel::from_handshake(cli_act_2)?;
-        Ok(KKTransport { stream, channel })
+        KKChannel::from_handshake(cli_act_2).map_err(|e| e.into())
     }
 
     /// Accept an incoming connection and immediately perform the noise KK handshake
@@ -189,7 +226,78 @@ impl KKTransport {
 mod tests {
     use super::*;
     use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::gen_keypair;
-    use std::{collections::BTreeMap, str::FromStr, thread};
+    use std::{collections::BTreeMap, fs, process::Command, str::FromStr, thread};
+
+    #[test]
+    #[cfg(feature = "tor")]
+    fn test_transport_kk_tor() {
+        let ((client_pubkey, client_privkey), (server_pubkey, server_privkey)) =
+            (gen_keypair(), gen_keypair());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let server_addr = listener.local_addr().unwrap();
+
+        let datadir = "scratch_test_datadir";
+        // Clean from previous run
+        fs::remove_dir_all(&datadir).unwrap_or_else(|_| ());
+        fs::create_dir(&datadir).unwrap();
+        let mut file = fs::File::create(format!("{}/torrc", datadir)).unwrap();
+        let torrc = format!(
+            r#"HiddenServiceDir {0}/hidden_service/
+HiddenServicePort 19051 127.0.0.1:{1}
+DataDirectory {0}/server
+Log notice file {0}/server/log
+SOCKSPort 0"#,
+            datadir,
+            server_addr.port(),
+        );
+        file.write_all(torrc.as_bytes()).unwrap();
+        let mut hidden_service_process = Command::new("tor")
+            .args(&["-f", &format!("{}/torrc", datadir)])
+            .spawn()
+            .expect("Tor failed to start");
+
+        let msg = "Test message".as_bytes();
+
+        // hidden_service_process won't be killed if we panic here, so
+        // instead of unwrapping directly I'm using `?` in a closure
+        // and unwrapping the result after killing tor.
+        // This way if there's an error we don't leave dangling tors around
+        let c = || -> Result<_, Box<dyn std::error::Error>> {
+            let client_proxy = TorProxy::start_tor(format!("{}/client/", datadir).into(), None);
+
+            // server thread
+            let server_thread = thread::spawn(move || {
+                let my_noise_privkey = server_privkey;
+                let their_noise_pubkey = client_pubkey;
+                let mut server_transport =
+                    KKTransport::accept(&listener, &my_noise_privkey, &[their_noise_pubkey])?;
+                server_transport.read()
+            });
+
+            // Giving tor a bit of time to start...
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            let hidden_service_onion =
+                fs::read_to_string(format!("{}/hidden_service/hostname", datadir))?;
+            let hidden_service_address = format!("{}:19051", hidden_service_onion.trim_end());
+
+            // client thread
+            let mut cli_channel = KKTransport::tor_connect(
+                &hidden_service_address,
+                &client_proxy,
+                &client_privkey,
+                &server_pubkey,
+            )?;
+            cli_channel.write(&msg)?;
+
+            Ok(server_thread
+                .join()
+                .map_err(|_| String::from("Error joining thread"))??)
+        };
+
+        let received_msg = c();
+        hidden_service_process.kill().unwrap_or_else(|_| {});
+        assert_eq!(msg, received_msg.unwrap().as_slice());
+    }
 
     #[test]
     fn test_transport_kk() {
