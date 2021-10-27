@@ -1,9 +1,10 @@
 [package]
 name = "revault_net"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["JSwambo <jake.t.swambo@hotmail.co.uk>", "Antoine Poinsot <darosior@protonmail.com>"]
 edition = "2018"
-repository = "https://github.com/revault/revault_tx"
+rust-version = "1.43"
+repository = "https://github.com/revault/revault_net"
 license-file = "LICENSE"
 keywords = ["bitcoin", "vault", "Noise", "transport"]
 description = "Transport and messages implementation of the version 0 Revault protocol"
