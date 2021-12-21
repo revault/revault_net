@@ -1,6 +1,6 @@
 [package]
 name = "revault_net"
-version = "0.3.0"
+version = "0.2.1"
 authors = ["JSwambo <jake.t.swambo@hotmail.co.uk>", "Antoine Poinsot <darosior@protonmail.com>"]
 edition = "2018"
 rust-version = "1.43"
