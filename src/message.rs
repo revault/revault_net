@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum Request<'a> {
-    WtSig {
+    WtSigs {
         method: &'a str,
-        params: watchtower::Sig,
+        params: watchtower::Sigs,
         id: u32,
     },
     SetSpendTx {
@@ -49,7 +49,7 @@ impl<'a> Request<'a> {
     /// Get the parameters of this request
     pub fn params(self) -> RequestParams {
         match self {
-            Request::WtSig { params, .. } => RequestParams::WtSig(params),
+            Request::WtSigs { params, .. } => RequestParams::WtSigs(params),
             Request::SetSpendTx { params, .. } => RequestParams::SetSpendTx(params),
             Request::GetSpendTx { params, .. } => RequestParams::GetSpendTx(params),
             Request::CoordSig { params, .. } => RequestParams::CoordSig(params),
@@ -61,7 +61,7 @@ impl<'a> Request<'a> {
     /// Get the id of this request
     pub fn id(&self) -> u32 {
         match self {
-            Request::WtSig { id, .. } => *id,
+            Request::WtSigs { id, .. } => *id,
             Request::SetSpendTx { id, .. } => *id,
             Request::GetSpendTx { id, .. } => *id,
             Request::CoordSig { id, .. } => *id,
@@ -76,7 +76,7 @@ impl<'a> Request<'a> {
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum RequestParams {
-    WtSig(watchtower::Sig),
+    WtSigs(watchtower::Sigs),
     SetSpendTx(coordinator::SetSpendTx),
     GetSpendTx(coordinator::GetSpendTx),
     CoordSig(coordinator::Sig),
@@ -104,7 +104,7 @@ macro_rules! impl_to_request {
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ResponseResult {
-    WtSig(watchtower::SigResult),
+    WtSigs(watchtower::SigsResult),
     Sigs(coordinator::Sigs),
     Sig(coordinator::SigResult),
     SetSpend(coordinator::SetSpendResult),
@@ -124,7 +124,6 @@ pub struct Response<T> {
 pub mod watchtower {
     use super::{Deserialize, Request, Serialize};
     use bitcoin::{
-        hash_types::Txid,
         secp256k1::{key::PublicKey, Signature},
         util::bip32,
         OutPoint,
@@ -132,32 +131,37 @@ pub mod watchtower {
     use std::collections::BTreeMap;
     use std::convert::From;
 
-    /// Message from a stakeholder to share all signatures for a revocation
-    /// transaction with its watchtower.
+    /// A sufficient set of public keys and associated ALL|ANYONECANPAY Bitcoin
+    /// ECDSA signatures for each transaction type.
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub struct Sig {
-        /// A sufficient set of public keys and associated ALL|ANYONECANPAY
-        /// bitcoin ECDSA signatures to validate the revocation transaction
-        pub signatures: BTreeMap<PublicKey, Signature>,
-        /// Revocation transaction id
-        pub txid: Txid,
+    pub struct Signatures {
+        /// Emergency transaction signatures
+        pub emergency: BTreeMap<PublicKey, Signature>,
+        /// Cancel transaction signatures
+        pub cancel: BTreeMap<PublicKey, Signature>,
+        /// Unvault Emergency transaction signatures
+        pub unvault_emergency: BTreeMap<PublicKey, Signature>,
+    }
+
+    /// Message from a stakeholder to share the signatures for all revocation
+    /// transactions with its watchtower.
+    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+    pub struct Sigs {
+        /// All transactions' signatures
+        pub signatures: Signatures,
         /// Deposit outpoint of this vault
         pub deposit_outpoint: OutPoint,
         /// Derivation index of the deposit descriptor
         pub derivation_index: bip32::ChildNumber,
     }
-    impl_to_request!(Sig, "sig", WtSig);
+    impl_to_request!(Sigs, "sigs", WtSigs);
 
-    /// Message from the watchtower to stakeholder to acknowledge that it has
-    /// sufficient signatures and fees to begin guarding the vault with the
-    /// revocation transaction
+    /// Message from the watchtower to stakeholder to acknowledge that it checked
+    /// and stored the revocation transaction signatures.
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-    pub struct SigResult {
+    pub struct SigsResult {
         /// Result of acknowledgement
         pub ack: bool,
-        // FIXME: we don't need it anymore once we have ids in messages
-        /// Revocation transaction id
-        pub txid: Txid,
     }
 }
 
@@ -416,16 +420,22 @@ mod tests {
     fn serde_watchtower_sig() {
         let pubkey: PublicKey = get_dummy_pubkey();
         let sig: Signature = get_dummy_sig();
-        let signatures: BTreeMap<PublicKey, Signature> = [(pubkey, sig)].iter().cloned().collect();
-        let txid = Txid::default();
+        let emergency: BTreeMap<PublicKey, Signature> = [(pubkey, sig)].iter().cloned().collect();
+        let cancel: BTreeMap<PublicKey, Signature> = [(pubkey, sig)].iter().cloned().collect();
+        let unvault_emergency: BTreeMap<PublicKey, Signature> =
+            [(pubkey, sig)].iter().cloned().collect();
+        let signatures = watchtower::Signatures {
+            emergency,
+            cancel,
+            unvault_emergency,
+        };
         let deposit_outpoint = OutPoint::from_str(
             "3694ef9e8fcd78e9b8165a41e6f5e2b5f10bcd92c6d6e42b3325a850df56cd83:0",
         )
         .unwrap();
         let derivation_index = 42398.into();
-        let msg = watchtower::Sig {
+        let msg = watchtower::Sigs {
             signatures,
-            txid,
             deposit_outpoint,
             derivation_index,
         };
@@ -433,23 +443,19 @@ mod tests {
         roundtrip!(req);
         assert_str_ser!(
             req,
-            format!("{{\"method\":\"sig\",\"params\":{{\"signatures\":{{\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\"}},\"txid\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"deposit_outpoint\":\"3694ef9e8fcd78e9b8165a41e6f5e2b5f10bcd92c6d6e42b3325a850df56cd83:0\",\"derivation_index\":42398}},\"id\":{}}}", req.id())
+            format!("{{\"method\":\"sigs\",\"params\":{{\"signatures\":{{\"emergency\":{{\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\"}},\"cancel\":{{\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\"}},\"unvault_emergency\":{{\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\"}}}},\"deposit_outpoint\":\"3694ef9e8fcd78e9b8165a41e6f5e2b5f10bcd92c6d6e42b3325a850df56cd83:0\",\"derivation_index\":42398}},\"id\":{}}}", req.id())
             );
     }
 
     #[test]
     fn serde_watchtower_sig_ack() {
         let ack = true;
-        let txid = Txid::default();
         let msg = Response {
-            result: ResponseResult::WtSig(watchtower::SigResult { ack, txid }),
+            result: ResponseResult::WtSigs(watchtower::SigsResult { ack }),
             id: 1946,
         };
         roundtrip!(msg);
-        assert_str_ser!(
-            msg,
-            r#"{"result":{"ack":true,"txid":"0000000000000000000000000000000000000000000000000000000000000000"},"id":1946}"#
-        );
+        assert_str_ser!(msg, r#"{"result":{"ack":true},"id":1946}"#);
     }
 
     #[test]
