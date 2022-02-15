@@ -122,14 +122,40 @@ pub struct Response<T> {
 
 /// Messages related to the communication with the Watchtower(s)
 pub mod watchtower {
-    use super::{Deserialize, Request, Serialize};
+    use super::Request;
     use bitcoin::{
         secp256k1::{key::PublicKey, Signature},
         util::bip32,
-        OutPoint,
+        Amount, OutPoint,
     };
-    use std::collections::BTreeMap;
-    use std::convert::From;
+    use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+    use std::{collections::BTreeMap, convert::From, str::FromStr};
+
+    /// Serialize an amount as sats
+    pub fn ser_amount_sat<S: Serializer>(amount: &Amount, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&amount.as_sat().to_string())
+    }
+
+    /// Deserialize an amount from sats
+    pub fn deser_amount_from_sats<'de, D>(deserializer: D) -> Result<Amount, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let sats: u64 =
+            u64::from_str(&String::deserialize(deserializer)?).map_err(de::Error::custom)?;
+        Ok(Amount::from_sat(sats))
+    }
+
+    /// The key in the mapping from feerate to Cancel signatures. (De)serializes an amount in
+    /// satoshis as a string.
+    #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq)]
+    pub struct CancelFeerate(
+        #[serde(
+            serialize_with = "ser_amount_sat",
+            deserialize_with = "deser_amount_from_sats"
+        )]
+        pub Amount,
+    );
 
     /// A sufficient set of public keys and associated ALL|ANYONECANPAY Bitcoin
     /// ECDSA signatures for each transaction type.
@@ -137,8 +163,8 @@ pub mod watchtower {
     pub struct Signatures {
         /// Emergency transaction signatures
         pub emergency: BTreeMap<PublicKey, Signature>,
-        /// Cancel transaction signatures
-        pub cancel: BTreeMap<PublicKey, Signature>,
+        /// Mapping from feerates to Cancel transaction signatures
+        pub cancel: BTreeMap<CancelFeerate, BTreeMap<PublicKey, Signature>>,
         /// Unvault Emergency transaction signatures
         pub unvault_emergency: BTreeMap<PublicKey, Signature>,
     }
@@ -366,7 +392,7 @@ mod tests {
                 key::{PublicKey, SecretKey},
                 Secp256k1, Signature,
             },
-            OutPoint,
+            Amount, OutPoint,
         },
         transactions::{RevaultTransaction, SpendTransaction},
     };
@@ -421,7 +447,23 @@ mod tests {
         let pubkey: PublicKey = get_dummy_pubkey();
         let sig: Signature = get_dummy_sig();
         let emergency: BTreeMap<PublicKey, Signature> = [(pubkey, sig)].iter().cloned().collect();
-        let cancel: BTreeMap<PublicKey, Signature> = [(pubkey, sig)].iter().cloned().collect();
+        let cancel_sigs_20: BTreeMap<PublicKey, Signature> =
+            [(pubkey, sig)].iter().cloned().collect();
+        let cancel_sigs_100: BTreeMap<PublicKey, Signature> =
+            [(pubkey, sig)].iter().cloned().collect();
+        let cancel: BTreeMap<_, _> = [
+            (
+                watchtower::CancelFeerate(Amount::from_sat(20)),
+                cancel_sigs_20,
+            ),
+            (
+                watchtower::CancelFeerate(Amount::from_sat(100)),
+                cancel_sigs_100,
+            ),
+        ]
+        .iter()
+        .cloned()
+        .collect();
         let unvault_emergency: BTreeMap<PublicKey, Signature> =
             [(pubkey, sig)].iter().cloned().collect();
         let signatures = watchtower::Signatures {
@@ -443,7 +485,7 @@ mod tests {
         roundtrip!(req);
         assert_str_ser!(
             req,
-            format!("{{\"method\":\"sigs\",\"params\":{{\"signatures\":{{\"emergency\":{{\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\"}},\"cancel\":{{\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\"}},\"unvault_emergency\":{{\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\"}}}},\"deposit_outpoint\":\"3694ef9e8fcd78e9b8165a41e6f5e2b5f10bcd92c6d6e42b3325a850df56cd83:0\",\"derivation_index\":42398}},\"id\":{}}}", req.id())
+            format!("{{\"method\":\"sigs\",\"params\":{{\"signatures\":{{\"emergency\":{{\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\"}},\"cancel\":{{\"20\":{{\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\"}},\"100\":{{\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\"}}}},\"unvault_emergency\":{{\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\"}}}},\"deposit_outpoint\":\"3694ef9e8fcd78e9b8165a41e6f5e2b5f10bcd92c6d6e42b3325a850df56cd83:0\",\"derivation_index\":42398}},\"id\":{}}}", req.id())
             );
     }
 
