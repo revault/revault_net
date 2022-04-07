@@ -1,2 +1,3 @@
 Cargo.lock
 fuzz/corpus
+target/
