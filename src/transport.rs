@@ -14,7 +14,7 @@ use crate::{
     },
 };
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
 /// Wrapper type for a TcpStream and KKChannel that automatically enforces authenticated and
@@ -53,19 +53,17 @@ impl KKTransport {
         Ok(KKTransport { stream, channel })
     }
 
-    /// Accept an incoming connection and immediately perform the noise KK handshake
-    /// as a responder with our single private key and a set of possible public key for them.
+    /// Perform the noise KK handshake as a responder with our single private key
+    /// and a set of possible public key for them.
     /// This is used by servers to identify the origin of the message.
     pub fn accept(
-        listener: &TcpListener,
+        mut connection: TcpStream,
         my_noise_privkey: &SecretKey,
         their_possible_pubkeys: &[PublicKey],
     ) -> Result<KKTransport, Error> {
-        let (mut stream, _) = listener.accept().map_err(|e| Error::Transport(e))?;
-
         // read msg_1 from stream
         let mut msg_1 = [0u8; KK_MSG_1_SIZE];
-        stream.read_exact(&mut msg_1)?;
+        connection.read_exact(&mut msg_1)?;
         let msg_act_1 = KKMessageActOne(msg_1);
 
         let serv_act_1 =
@@ -74,9 +72,12 @@ impl KKTransport {
         let channel = KKChannel::from_handshake(serv_act_2)?;
 
         // write msg_2 to stream
-        stream.write_all(&msg_2.0)?;
+        connection.write_all(&msg_2.0)?;
 
-        Ok(KKTransport { stream, channel })
+        Ok(KKTransport {
+            stream: connection,
+            channel,
+        })
     }
 
     // Read an encrypted Noise message from the communication channel
@@ -189,7 +190,7 @@ impl KKTransport {
 mod tests {
     use super::*;
     use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::gen_keypair;
-    use std::{collections::BTreeMap, str::FromStr, thread};
+    use std::{collections::BTreeMap, net::TcpListener, str::FromStr, thread};
 
     #[test]
     fn test_transport_kk() {
@@ -212,9 +213,10 @@ mod tests {
             msg
         });
 
+        let (connection, _) = listener.accept().unwrap();
         let mut server_transport =
-            KKTransport::accept(&listener, &server_privkey, &[client_pubkey])
-                .expect("Server channel binding and accepting");
+            KKTransport::accept(connection, &server_privkey, &[client_pubkey])
+                .expect("Connection is correct");
 
         let sent_msg = cli_thread.join().unwrap();
         let received_msg = server_transport.read().unwrap();
@@ -261,9 +263,10 @@ mod tests {
             assert_eq!(serde_json::to_string(&resp).unwrap(), resp_str.to_string());
         });
 
+        let (connection, _) = listener.accept().unwrap();
         let mut server_transport =
-            KKTransport::accept(&listener, &server_privkey, &[client_pubkey])
-                .expect("Server channel binding and accepting");
+            KKTransport::accept(connection, &server_privkey, &[client_pubkey])
+                .expect("Connection is correct");
         server_transport
             .read_req(|params| {
                 assert_eq!(
