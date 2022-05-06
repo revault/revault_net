@@ -8,7 +8,7 @@ jobs:
       matrix:
         toolchain:
           - nightly
-          - 1.43
+          - 1.48
         os:
           - ubuntu-latest
           - macOS-latest
@@ -24,7 +24,7 @@ jobs:
           override: true
           profile: minimal
       - name: Pin ed25519 which broke MSRV in minor version
-        if: matrix.toolchain == '1.43'
+        if: matrix.toolchain == '1.48'
         run: cargo update -p ed25519 --precise "1.2.0"
       - name: Build on Rust ${{ matrix.toolchain }}
         run: cargo build --verbose --color always
