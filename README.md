@@ -8,13 +8,13 @@ as well as the [transport over which these messages are exchanged](https://githu
 
 # Minimum Supported Rust Version
 
-This library should always compile with any combination of features on **Rust 1.43**.
+This library should always compile with any combination of features on **Rust 1.48**.
 
 Since dependencies are breaking backward compatibility in minor versions, you'll unfortunately have
-to pin some of them to be able to build with 1.43:
+to pin some of them to be able to build with 1.48:
 ```
-cargo update -p ed25519 --precise "1.2.0"
-cargo +1.43 build
+cargo update -p ed25519 --precise "1.3.0"
+cargo +1.48 build
 ```
 
 
