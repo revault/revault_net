@@ -232,13 +232,13 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let id = bitcoin::Txid::from_str(
+        let txid = bitcoin::Txid::from_str(
             "0000000000000000000000000000000000000000000000000000000000000000",
         )
         .unwrap();
-        let req = message::coordinator::GetSigs { id };
+        let req = message::coordinator::GetSigs { txid };
         let params_str =
-            r#"{"id":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
+            r#"{"txid":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
 
         let mut signatures = BTreeMap::new();
         let pubkey = bitcoin::PublicKey::from_str(

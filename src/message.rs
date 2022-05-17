@@ -262,7 +262,7 @@ pub mod coordinator {
     #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
     pub struct GetSigs {
         /// Transaction id
-        pub id: Txid,
+        pub txid: Txid,
     }
     impl_to_request!(GetSigs, "get_sigs", GetSigs);
 
@@ -284,7 +284,7 @@ pub mod coordinator {
         pub deposit_outpoints: Vec<OutPoint>,
         /// Fully signed spend transaction, as hex
         #[serde(with = "serde_tx_base64")]
-        transaction: Transaction,
+        spend_tx: Transaction,
     }
     impl_to_request!(SetSpendTx, "set_spend_tx", SetSpendTx);
 
@@ -294,16 +294,16 @@ pub mod coordinator {
         /// The SpendTransaction MUST have been finalized beforehand or it'll panic.
         pub fn from_spend_tx(deposit_outpoints: Vec<OutPoint>, tx: SpendTransaction) -> Self {
             assert!(tx.is_finalized());
-            let transaction = tx.into_psbt().extract_tx();
+            let spend_tx = tx.into_psbt().extract_tx();
             Self {
                 deposit_outpoints,
-                transaction,
+                spend_tx,
             }
         }
 
         /// Get the raw spend transaction
         pub fn spend_tx(self) -> Transaction {
-            self.transaction
+            self.spend_tx
         }
     }
 
@@ -331,7 +331,7 @@ pub mod coordinator {
         /// The Bitcoin-serialized Spend transaction. The sync server isn't
         /// creating it so there is no point to create it from_spend_tx().
         #[serde(with = "serde_tx_base64_nullable")]
-        pub transaction: Option<Transaction>,
+        pub spend_tx: Option<Transaction>,
     }
 
     /// Message from a stakeholder client to sync server to share (at any time)
@@ -343,7 +343,7 @@ pub mod coordinator {
         /// Bitcoin ECDSA signature as hex
         pub signature: Signature,
         /// Txid of the transaction the signature applies to
-        pub id: Txid,
+        pub txid: Txid,
     }
     impl_to_request!(Sig, "sig", CoordSig);
 
@@ -518,41 +518,41 @@ mod tests {
         // Response
         let msg = Response {
             result: ResponseResult::SpendTx(coordinator::SpendTx {
-                transaction: Some(get_dummy_spend_tx().into_psbt().extract_tx()),
+                spend_tx: Some(get_dummy_spend_tx().into_psbt().extract_tx()),
             }),
             id: 0,
         };
         roundtrip!(msg);
         assert_str_ser!(
             msg,
-            r#"{"result":{"transaction":"AgAAAANJ71BuQ4CUtqlXOE1PYnawJZcyp7bHuDuSUSvc3r6nwAAAAAAABgAAAHDAIEqJqZwGfl+PShDdZwBT63AThd6ZwrgbaeWmuoEoAAAAAAAGAAAADAJghSHTLZuQgfwFVn96+4W6U4LE7Iav+u9mdHaT/1oAAAAAAAYAAAAEUKgAAAAAAAAiACC9fC/EFTZfTf6m5+zK0UnZ1LgEpVcgoxCbLFRdNs8k+YDw+gIAAAAAFgAUIwNcad58BvjztjF42OeltTMf6kRAS0wAAAAAABYAFP6urYtOj5ucCjdlCh5SDQXrFVlsjHcTAgAAAAAiACB8BhX++rPARYdLqRUyMDXJBFshCqr/+jubiKTR5JKVqwAAAAA="},"id":0}"#
+            r#"{"result":{"spend_tx":"AgAAAANJ71BuQ4CUtqlXOE1PYnawJZcyp7bHuDuSUSvc3r6nwAAAAAAABgAAAHDAIEqJqZwGfl+PShDdZwBT63AThd6ZwrgbaeWmuoEoAAAAAAAGAAAADAJghSHTLZuQgfwFVn96+4W6U4LE7Iav+u9mdHaT/1oAAAAAAAYAAAAEUKgAAAAAAAAiACC9fC/EFTZfTf6m5+zK0UnZ1LgEpVcgoxCbLFRdNs8k+YDw+gIAAAAAFgAUIwNcad58BvjztjF42OeltTMf6kRAS0wAAAAAABYAFP6urYtOj5ucCjdlCh5SDQXrFVlsjHcTAgAAAAAiACB8BhX++rPARYdLqRUyMDXJBFshCqr/+jubiKTR5JKVqwAAAAA="},"id":0}"#
         );
 
         // Response
         let msg = Response {
-            result: ResponseResult::SpendTx(coordinator::SpendTx { transaction: None }),
+            result: ResponseResult::SpendTx(coordinator::SpendTx { spend_tx: None }),
             id: 0,
         };
         roundtrip!(msg);
-        assert_str_ser!(msg, r#"{"result":{"transaction":null},"id":0}"#);
+        assert_str_ser!(msg, r#"{"result":{"spend_tx":null},"id":0}"#);
     }
 
     #[test]
     fn serde_server_sig() {
         let pubkey = get_dummy_pubkey();
         let signature = get_dummy_sig();
-        let id = Txid::default();
+        let txid = Txid::default();
 
         let msg = coordinator::Sig {
             pubkey,
             signature,
-            id,
+            txid,
         };
         let req = Request::from(msg);
         roundtrip!(req);
         assert_str_ser!(
             req,
-            format!("{{\"method\":\"sig\",\"params\":{{\"pubkey\":\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\",\"signature\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\",\"id\":\"0000000000000000000000000000000000000000000000000000000000000000\"}},\"id\":{}}}", req.id()
+            format!("{{\"method\":\"sig\",\"params\":{{\"pubkey\":\"035be5e9478209674a96e60f1f037f6176540fd001fa1d64694770c56a7709c42c\",\"signature\":\"3045022100dc4dc264a9fef17a3f253449cf8c397ab6f16fb3d63d86940b5586823dfd02ae02203b461bb4336b5ecbaefd6627aa922efc048fec0c881c10c4c9428fca69c132a2\",\"txid\":\"0000000000000000000000000000000000000000000000000000000000000000\"}},\"id\":{}}}", req.id()
         ));
 
         let resp = Response {
@@ -569,13 +569,13 @@ mod tests {
 
     #[test]
     fn serde_server_get_sigs() {
-        let id = Txid::default();
-        let msg = coordinator::GetSigs { id };
+        let txid = Txid::default();
+        let msg = coordinator::GetSigs { txid };
         let req = Request::from(msg);
         roundtrip!(req);
         assert_str_ser!(
             req,
-            format!("{{\"method\":\"get_sigs\",\"params\":{{\"id\":\"0000000000000000000000000000000000000000000000000000000000000000\"}},\"id\":{}}}", req.id()
+            format!("{{\"method\":\"get_sigs\",\"params\":{{\"txid\":\"0000000000000000000000000000000000000000000000000000000000000000\"}},\"id\":{}}}", req.id()
         ));
     }
 
@@ -620,7 +620,7 @@ mod tests {
         roundtrip!(req);
         assert_str_ser!(
             req,
-            format!("{{\"method\":\"set_spend_tx\",\"params\":{{\"deposit_outpoints\":[\"6e4977728e7100db80c30751f27cf834b7a1e02d083a4338874e48d1f3694446:0\"],\"transaction\":\"AgAAAAABA0nvUG5DgJS2qVc4TU9idrAllzKntse4O5JRK9zevqfAAAAAAAAGAAAAcMAgSompnAZ+X49KEN1nAFPrcBOF3pnCuBtp5aa6gSgAAAAAAAYAAAAMAmCFIdMtm5CB/AVWf3r7hbpTgsTshq/672Z0dpP/WgAAAAAABgAAAARQqAAAAAAAACIAIL18L8QVNl9N/qbn7MrRSdnUuASlVyCjEJssVF02zyT5gPD6AgAAAAAWABQjA1xp3nwG+PO2MXjY56W1Mx/qREBLTAAAAAAAFgAU/q6ti06Pm5wKN2UKHlINBesVWWyMdxMCAAAAACIAIHwGFf76s8BFh0upFTIwNckEWyEKqv/6O5uIpNHkkpWrBABHMEQCIFLZr2Nuwobsgymjcn58PicDmbhIDxSVijJweBKGAo33AiBc/NsJUNa39emKW0Dqn4LxaHtdhKnLE2dh7vy1IUCjJwFIMEUCIQD2i3eZIuOtA77TH878EP5qNijM4lUXSxCGcB+yW05mFQIgeDNpJ78R91RZYJYnCSSKnt8i4fg5Ts1FYzOElL0vrYIBwVIhAzVqDuAgpaArpeXgi3dflyz8T+CzCLFMvlzNNcJZufcCIQKkN7RngHjATz0dun59JLi9AktAMm6w5bvDcCMxTjrpMyECaAQSMA1k18IzLHtjIgfP5CHBTmQAogA3JmZbYhJfOTdTrmR2qRSHvfw0TjWTqeTgEOkQqyA3JQgxI4isa3apFCbNhNu0kGIW4eMsTZDvpQ5xaggmiKxsk2t2qRQbXA/bi900SbdbgiI9ifFG+GI74IisbJNTh2dWsmgEAEgwRQIhAJnsrYnLPsa6MsrNXiBSX2ot8xheYZ3T4TAwS+zzFqX4AiA2Fae4gOxRaDD5lG/F2vIJ3tZgzW9YmOQD3FISjKPorQFHMEQCIA60INngILKViBvvKfTfg2TqNizWnCDbHNJTWJpoDSfpAiBuPKDnZmKJZWvs4UHJSFvz02D8+maPaT/JEhhPdixr/wHBUiECBI1AhZI2dhKt8SXyO7NMrD2jcGNhD4OBvKLNKGorMhwhA361G3JukjFUr0h3DGxPEWDLZiyJCq2ca+ejBd6U9uUmIQLblte6cEoOmasC9eIFsn/7H06jmkv7wWEqACpdJ6yfRVOuZHapFNZYZNebVTETiuqoPYWSIpL3ivxhiKxrdqkUIG96fbB3lAIWgcCX+JEeD71ImSCIrGyTa3apFE/+YTc56xM7qRIk6CwECjItN87yiKxsk1OHZ1ayaAQASDBFAiEAqz2O8jH95Dcdg1e7NbqZBKmDIrHqmG+NZE3Sd8gRC8sCIHruGPZ4xm2gnH+JjFnTVyOEfbPC+8H8SfsT1tRLnGaVAUcwRAIgB4sc2wYN/EZoBxzi9tRVZU6XxwP4RDLr8cj8Iy3ADlACIFdNttmXUsFtttvOHnCpo+r5turWYdrQwGwXl1Wg27U+AcFSIQIEjUCFkjZ2Eq3xJfI7s0ysPaNwY2EPg4G8os0oaisyHCEDfrUbcm6SMVSvSHcMbE8RYMtmLIkKrZxr56MF3pT25SYhAtuW17pwSg6ZqwL14gWyf/sfTqOaS/vBYSoAKl0nrJ9FU65kdqkU1lhk15tVMROK6qg9hZIikveK/GGIrGt2qRQgb3p9sHeUAhaBwJf4kR4PvUiZIIisbJNrdqkUT/5hNznrEzupEiToLAQKMi03zvKIrGyTU4dnVrJoAAAAAA==\"}},\"id\":{}}}", req.id()
+            format!("{{\"method\":\"set_spend_tx\",\"params\":{{\"deposit_outpoints\":[\"6e4977728e7100db80c30751f27cf834b7a1e02d083a4338874e48d1f3694446:0\"],\"spend_tx\":\"AgAAAAABA0nvUG5DgJS2qVc4TU9idrAllzKntse4O5JRK9zevqfAAAAAAAAGAAAAcMAgSompnAZ+X49KEN1nAFPrcBOF3pnCuBtp5aa6gSgAAAAAAAYAAAAMAmCFIdMtm5CB/AVWf3r7hbpTgsTshq/672Z0dpP/WgAAAAAABgAAAARQqAAAAAAAACIAIL18L8QVNl9N/qbn7MrRSdnUuASlVyCjEJssVF02zyT5gPD6AgAAAAAWABQjA1xp3nwG+PO2MXjY56W1Mx/qREBLTAAAAAAAFgAU/q6ti06Pm5wKN2UKHlINBesVWWyMdxMCAAAAACIAIHwGFf76s8BFh0upFTIwNckEWyEKqv/6O5uIpNHkkpWrBABHMEQCIFLZr2Nuwobsgymjcn58PicDmbhIDxSVijJweBKGAo33AiBc/NsJUNa39emKW0Dqn4LxaHtdhKnLE2dh7vy1IUCjJwFIMEUCIQD2i3eZIuOtA77TH878EP5qNijM4lUXSxCGcB+yW05mFQIgeDNpJ78R91RZYJYnCSSKnt8i4fg5Ts1FYzOElL0vrYIBwVIhAzVqDuAgpaArpeXgi3dflyz8T+CzCLFMvlzNNcJZufcCIQKkN7RngHjATz0dun59JLi9AktAMm6w5bvDcCMxTjrpMyECaAQSMA1k18IzLHtjIgfP5CHBTmQAogA3JmZbYhJfOTdTrmR2qRSHvfw0TjWTqeTgEOkQqyA3JQgxI4isa3apFCbNhNu0kGIW4eMsTZDvpQ5xaggmiKxsk2t2qRQbXA/bi900SbdbgiI9ifFG+GI74IisbJNTh2dWsmgEAEgwRQIhAJnsrYnLPsa6MsrNXiBSX2ot8xheYZ3T4TAwS+zzFqX4AiA2Fae4gOxRaDD5lG/F2vIJ3tZgzW9YmOQD3FISjKPorQFHMEQCIA60INngILKViBvvKfTfg2TqNizWnCDbHNJTWJpoDSfpAiBuPKDnZmKJZWvs4UHJSFvz02D8+maPaT/JEhhPdixr/wHBUiECBI1AhZI2dhKt8SXyO7NMrD2jcGNhD4OBvKLNKGorMhwhA361G3JukjFUr0h3DGxPEWDLZiyJCq2ca+ejBd6U9uUmIQLblte6cEoOmasC9eIFsn/7H06jmkv7wWEqACpdJ6yfRVOuZHapFNZYZNebVTETiuqoPYWSIpL3ivxhiKxrdqkUIG96fbB3lAIWgcCX+JEeD71ImSCIrGyTa3apFE/+YTc56xM7qRIk6CwECjItN87yiKxsk1OHZ1ayaAQASDBFAiEAqz2O8jH95Dcdg1e7NbqZBKmDIrHqmG+NZE3Sd8gRC8sCIHruGPZ4xm2gnH+JjFnTVyOEfbPC+8H8SfsT1tRLnGaVAUcwRAIgB4sc2wYN/EZoBxzi9tRVZU6XxwP4RDLr8cj8Iy3ADlACIFdNttmXUsFtttvOHnCpo+r5turWYdrQwGwXl1Wg27U+AcFSIQIEjUCFkjZ2Eq3xJfI7s0ysPaNwY2EPg4G8os0oaisyHCEDfrUbcm6SMVSvSHcMbE8RYMtmLIkKrZxr56MF3pT25SYhAtuW17pwSg6ZqwL14gWyf/sfTqOaS/vBYSoAKl0nrJ9FU65kdqkU1lhk15tVMROK6qg9hZIikveK/GGIrGt2qRQgb3p9sHeUAhaBwJf4kR4PvUiZIIisbJNrdqkUT/5hNznrEzupEiToLAQKMi03zvKIrGyTU4dnVrJoAAAAAA==\"}},\"id\":{}}}", req.id()
         ));
 
         let response = Response {
