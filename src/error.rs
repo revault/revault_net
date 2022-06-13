@@ -61,6 +61,8 @@ pub enum Error {
     Transport(std::io::Error),
     /// JSON serialization / deserialization error.
     Json(serde_json::Error),
+    /// Timeout
+    Timeout,
 }
 
 impl fmt::Display for Error {
@@ -69,6 +71,7 @@ impl fmt::Display for Error {
             Error::Noise(ref e) => write!(f, "Noise Error: {}", e),
             Error::Transport(ref e) => write!(f, "Transport Error: {}", e),
             Error::Json(ref e) => write!(f, "Json error: '{}'", e),
+            Error::Timeout => write!(f, "Timeout reached"),
         }
     }
 }
