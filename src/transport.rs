@@ -15,7 +15,12 @@ use crate::{
 };
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// Timeout in second for read and write through the tcp stream;
+const TCP_STREAM_TIMEOUT: u64 = 20;
+/// Timeout in second for the response reading loop after a request.
+const RESPONSE_TIMEOUT: u64 = 20;
 
 /// Wrapper type for a TcpStream and KKChannel that automatically enforces authenticated and
 /// encrypted channels when communicating
@@ -33,9 +38,12 @@ impl KKTransport {
         my_noise_privkey: &SecretKey,
         their_noise_pubkey: &PublicKey,
     ) -> Result<KKTransport, Error> {
-        let timeout = Duration::from_secs(20);
+        let timeout = Duration::from_secs(TCP_STREAM_TIMEOUT);
         let mut stream = TcpStream::connect_timeout(&addr, timeout)?;
+
+        // Server may not be trusted and may block the stream and delay its response.
         stream.set_read_timeout(Some(timeout))?;
+        stream.set_write_timeout(Some(timeout))?;
 
         let (cli_act_1, msg_1) =
             KKHandshakeActOne::initiator(my_noise_privkey, their_noise_pubkey)?;
@@ -123,7 +131,10 @@ impl KKTransport {
         log::trace!("Sending request: '{}'", String::from_utf8_lossy(&raw_req));
         self.write(&raw_req)?;
 
-        loop {
+        let timeout = Duration::from_secs(RESPONSE_TIMEOUT);
+        let start_time = Instant::now();
+
+        while start_time.elapsed() < timeout {
             let raw_resp = self.read()?;
             log::trace!("Read response: '{}'", String::from_utf8_lossy(&raw_resp));
             let resp: message::Response<T> = serde_json::from_slice(&raw_resp)?;
@@ -133,6 +144,8 @@ impl KKTransport {
                 log::trace!("Reponse was not for us. Continuing to read.");
             }
         }
+
+        Err(Error::Timeout)
     }
 
     // DRY helper to write a response to the communication channel
